@@ -6,10 +6,10 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
-#include <zephyr.h>
-#include <device.h>
+#include <zephyr/zephyr.h>
+#include <zephyr/device.h>
 #include <assert.h>
-#include <logging/log.h>
+#include <zephyr/logging/log.h>
 
 #define LOG_LEVEL LOG_LEVEL_DBG
 LOG_MODULE_REGISTER(kp);
