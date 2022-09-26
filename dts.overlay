@@ -37,3 +37,6 @@
 &adc1 {
 	status = "disabled";
 };
+&pinctrl {
+	swj-cfg = "jtag-disable";
+};
