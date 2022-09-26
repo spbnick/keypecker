@@ -1,0 +1,237 @@
+Commands:
+* Disable motor control
+	"off"
+* Enable motor control
+	"on"
+* Register the current position as fully pressed (only when enabled)
+	"location pressed"
+* Register the current position as fully released (only when enabled)
+	"location released"
+* Move motor down 1 or n steps (only when enabled)
+	"down [n]"
+* Move motor up 1 or n steps (only when enabled)
+	"up [n]"
+* Specify how to detect a pressure event (which edge)
+	"sense pressure rising"
+* Specify how to detect a release event (which edge)
+	"sense release falling"
+
+State:
+	off
+	on
+		not moving
+		moving
+
+---
+We need to be able to tell the actuator which position to go to, and with
+which speed. We should also be able to give new instructions before the
+previous ones were completed. Finally we should be able to wait until each
+instruction is either completed, or aborted/superseded.
+
+We can only have one task at a time, so it makes sense to have one state to
+keep. We could have a completion/interruption callback attached to the state.
+Then we could have an API that would lock that state, and call interruption
+callback when we give it a new task. The timer function would strive to
+execute the task and call completion callbacks.
+---
+TODO: Add an emergency stop button.
+---
+How about we have a semaphore that's taken for moving the actuator and
+returned when moving is done, or aborted?
+---
+
+				DISABLED	ENABLED		MOVING
+kp_act_get_status		return		return		return
+kp_act_set_status(false->true)	-> ENABLED	noop		noop
+kp_act_set_status(true->false)	noop		-> DISABLED	-> DISABLED (ABORTED)
+kp_act_get_pos			return(last)	return		wait -> return
+kp_act_move_(to,by)		return DISABLED	MOVE, return	wait, MOVE, return
+kp_act_move_abort		return		return		ABORT, return
+
+MOVE LOCK?
+
+What are we trying to do?
+
+We want to make sure only one thread has control over the actuator, one "procedure".
+The command takes control, does its job (moving the actuator,
+calibrating/aiming, running a test, etc.), and then releases control.
+
+We want to be able to cancel a command.
+	- So, if we want the actuator module to go and do something for us by
+	  itself, we need to be able to abort that long-running task. That
+	  means we would need to have two-level abort: one level for the
+	  actuator library, and one for the command.
+	- However, even if we would e.g. try to control the actuator fully, in
+	  the command itself, we would still need to have two-level abort: one
+	  for the sleep intervals, when we're waiting for the next step, and
+	  one for the command itself. So, perhaps, we could live with two
+	  levels.
+	- E.g. implement locking "actuator control", and provide a function to
+	  break that lock, which would make all the functions trying to
+	  continue executing with that lock, abort.
+We want to be able to reset the robot completely.
+	- a simple controller reset would be fine,
+	as that would immediately bring "enable" down,
+	and release control of the actuator
+
+OK, how about we return a value when enabling the actuator, then use that value
+when locking the actuator use, which would return another value.
+
+        off --[on]--> on --[hold]--> held --[move]--> moving
+         ^            |^              |^                |
+         `----[off]---'`--[release]---'`---[finish]-----'
+         ^             ^              |^                |
+         `-------------|----[off]-----'`----[abort]-----'
+         ^             |                                |
+         |             `-------------------[release]----'
+         |                                              |
+         `-----------------------------------[off]------'
+
+	off --[on: power]--> on --[hold(power): handle]--> held --
+	--[move about, read position, etc. (handle)]--> moved --[finish]-->
+	held --[release(handle)]-> on --[off(power)]
+
+extern kp_act_power kp_act_on(void);
+extern kp_act_pos kp_act_locate(kp_act_power power);
+extern kp_act_handle kp_act_hold(kp_act_power power);
+extern kp_act_rc kp_act_move(kp_act_handle handle, bool absolute, kp_act_pos pos);
+extern void kp_act_abort(kp_act_handle handle);
+extern void kp_act_release(kp_act_handle handle);
+extern void kp_act_off(kp_act_power power);
+
+Should another module be able to turn off the power without knowing the "power"?
+Should we perhaps make the "power" value internal to the kp_act module?
+---
+What are we trying to do?
+
+* To make it safe to use the actuator from separate threads on a multi-core
+  system? Soo...
+	* Should a thread be able to "turn on" the actuator if it's already
+	  turned on by another thread? The same thread?
+	* Should a thread be able to turn off the actuator if it's turned on
+	  by another thread?
+	* Should a thread be able to cancel a movement requested by another
+	  thread?
+	  	- We need this for aborting shell commands
+	* Should we perhaps provide strongest guarantees for thread
+	  separation, and let threads decide how much control they want to
+	  share with other threads?
+	* There's a difference between protecting threads and giving out
+	  the users unique values to handle power ons and actuator movements.
+
+* To make sure that absolute position values are not used across power-ons?
+---
+We have a single lock for the complete internal state.
+We hold the lock while moving to prevent the power being turned off and
+another move competing with our move.
+We need to be able to abort a move.
+	To be able to do that we need to verify that the correct power is
+	supplied to the function. To access that we need to acquire a lock.
+
+We need to figure out which pieces of internal state we need when, and how
+consistent we need them.
+---
+Possible operations and exclusivity
+
+init	locate	on	abort
+		off
+		move
+
+TODO: Check that the actuator module is initialized in all its functions.
+	- done
+TODO: Consider adding a function checking if a position is valid for a power.
+
+We need to keep all the state locked at first, when starting the movement, and
+then unlock the termination flag, so that abortion can happen.
+
+The abortion function needs to verify if the power is on, and if the movement
+is running, and then abort.
+
+Timer function:
+	With locked state:
+		If power is off
+			Give movement semaphore
+			Stop
+		If abort is requested
+			Reset abort flag
+			Give movement semaphore
+			Stop
+		Move next step
+
+Move function:
+	With locked movement:
+		Lock state
+		Setup timer
+		Unlock state
+		Take movement semaphore
+
+We need to prevent two move functions being called at once
+---
+
+OK, how do we organize running interactive shell commands?
+
+Shell commands are assigned a kp_cmd_* function each.
+The kp_cmd_* function reads and validates arguments, and invokes a library
+function specifying which function to run for the actual command body, and
+returns with status zero.
+
+The library function sets a shell bypass function which interprets input
+sequences, and schedules executing the specified function with another thread,
+then returns.
+
+The other thread runs the function, then removes the shell bypass function, to
+give control back to the shell.
+
+Can we use setjmp/longjmp to keep the body of actual command inside the
+kp_cmd_* function?
+
+So something like this would be nice:
+
+kp_cmd_blah(shell, argc, argv)
+{
+	/* Parse and validate args */
+	...
+	/* Install shell bypass, return control to shell */
+	YIELD_TO_SHELL;
+	/* Run inside separate thread, outside shell */
+	/* Return to the thread, which removes shell bypass */
+	DONE;
+}
+
+Likely won't work, as that would be jumping from one thread's stack to another
+thread's stack.
+
+What if instead we had a single generic function save the arguments we're
+passed, install the bypass function, schedule execution of the actual
+command in another thread, and return to shell. Another thread calls the
+function, and then removes the bypass function when it returns.
+
+Or perhaps we can have a macro which installs the bypass function, stores the
+current command function address and the arguments and schedules the function
+execution in another thread, and returns to the shell. Then another thread
+calls the same function but with e.g. a special command name, or maybe a
+special shell pointer, and that makes the macro proceed with the function
+execution instead. This seems like a good idea.
+
+We can even put the argument validation in front of that macro, so it exits
+early. It would be OK to validate and parse arguments again.
+
+How do we implement command termination with Ctrl-C?
+OK the input-reading function could scan the input for the Ctrl-C sequence,
+and then somehow terminate the command. Maybe the command could pass a
+termination callback to kp_shell_cmd_schedule, and that callback would abort
+the movement with kp_act_abort(), and set a variable specifying that the
+command was aborted?
+
+TODO: Define the move timer inside the move function
+---
+Control key inputs:
+
+0x03 - Ctrl-C
+0x04 - Ctrl-D
+0x1b 0x5b 0x41 - Up
+0x1b 0x5b 0x42 - Down
+0x1b 0x5b 0x43 - Right
+0x1b 0x5b 0x44 - Left
+0x0d - Enter
+---
