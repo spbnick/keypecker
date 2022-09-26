@@ -1,4 +1,6 @@
-/* kp.c - Manic Typer main entry point */
+/** @file
+ *  @brief Keypecker main entry point
+ */
 
 /*
  * Copyright (c) 2022 Nikolai Kondrashov
