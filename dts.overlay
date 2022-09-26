@@ -15,3 +15,25 @@
 		compatible = "zephyr,cdc-acm-uart";
 	};
 };
+
+&usart2 {
+	status = "disabled";
+};
+&usart3 {
+	status = "disabled";
+};
+&i2c1 {
+	status = "disabled";
+};
+&i2c2 {
+	status = "disabled";
+};
+&spi1 {
+	status = "disabled";
+};
+&spi2 {
+	status = "disabled";
+};
+&adc1 {
+	status = "disabled";
+};
