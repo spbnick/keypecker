@@ -7,4 +7,5 @@ project(keypecker VERSION 1)
 target_sources(
 	app PRIVATE
 	src/kp.c
+	src/kp_shell.c
 )
