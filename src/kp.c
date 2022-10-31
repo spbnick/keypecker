@@ -209,7 +209,7 @@ kp_cmd_swing(const struct shell *shell, size_t argc, char **argv)
 		steps = -steps;
 		rc = kp_act_move_by(kp_act_power_curr, steps);
 	}
-	if (kp_cmd_aborted) {
+	if (rc == KP_ACT_MOVE_RC_OK && kp_cmd_aborted) {
 		rc = KP_ACT_MOVE_RC_ABORTED;
 	}
 	if (rc == KP_ACT_MOVE_RC_ABORTED) {
