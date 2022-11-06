@@ -192,7 +192,7 @@ enum kp_input_st {
 };
 
 /** Current shell input state */
-enum kp_input_st kp_input_st;
+static enum kp_input_st kp_input_st;
 
 /**
  * Reset tracked shell input state to start processing another session.
