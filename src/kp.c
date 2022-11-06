@@ -230,6 +230,10 @@ kp_input_recv(const struct shell *shell, uint8_t *data, size_t len)
 				shell_set_bypass(shell, NULL);
 				k_mutex_unlock(&kp_input_mutex);
 				return;
+			case 0x0d: /* CR (Enter) */
+				msg = KP_INPUT_MSG_ENTER;
+				k_msgq_put(&kp_input_msgq, &msg, K_FOREVER);
+				break;
 			case 0x1b: /* ESC  */
 				kp_input_st = KP_INPUT_ST_ESC;
 				break;
