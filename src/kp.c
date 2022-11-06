@@ -334,6 +334,56 @@ SHELL_CMD_ARG_REGISTER(swing, NULL,
 			"current position, until interrupted",
 			kp_cmd_swing, 2, 0);
 
+/** Execute the "adjust" command */
+static int
+kp_cmd_adjust(const struct shell *shell, size_t argc, char **argv)
+{
+	enum kp_act_move_rc rc;
+	enum kp_input_msg msg;
+
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+
+	/* Return to the shell and restart in an input-diverted thread */
+	KP_SHELL_YIELD(kp_cmd_adjust, kp_input_recv);
+	kp_input_rset();
+
+	/* Move */
+	shell_print(shell,
+		    "Press up and down arrow keys to move the actuator.");
+	shell_print(shell, "Press Ctrl-C to abort.");
+	do {
+		/* Read next input message */
+		while (k_msgq_get(&kp_input_msgq, &msg, K_FOREVER) != 0);
+		switch (msg) {
+		case KP_INPUT_MSG_UP:
+		case KP_INPUT_MSG_DOWN:
+			rc = kp_act_move_by(
+				kp_act_power_curr,
+				(msg == KP_INPUT_MSG_DOWN) ? 1 : -1
+			);
+			break;
+		case KP_INPUT_MSG_ABORT:
+			rc = KP_ACT_MOVE_RC_ABORTED;
+			break;
+		default:
+			rc = KP_ACT_MOVE_RC_OK;
+			break;
+		}
+	} while (rc == KP_ACT_MOVE_RC_OK);
+
+	/* Report error, if any */
+	if (rc == KP_ACT_MOVE_RC_ABORTED) {
+		shell_error(shell, "Aborted");
+	} else if (rc == KP_ACT_MOVE_RC_OFF) {
+		shell_error(shell, "Actuator is off, stopping");
+	}
+	return rc != KP_ACT_MOVE_RC_OK;
+}
+
+SHELL_CMD_REGISTER(adjust, NULL, "Adjust actuator position interactively",
+			kp_cmd_adjust);
+
 /** Execute the "set top" command */
 static int
 kp_cmd_set_top(const struct shell *shell, size_t argc, char **argv)
