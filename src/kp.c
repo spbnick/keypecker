@@ -160,8 +160,51 @@ kp_cmd_down(const struct shell *shell, size_t argc, char **argv)
 SHELL_CMD_ARG_REGISTER(down, NULL, "Move actuator down (n steps)",
 			kp_cmd_down, 1, 1);
 
-/** True if the currently-running interactive command was aborted */
-static volatile bool kp_cmd_aborted;
+/** The mutex protecting all the input state */
+static K_MUTEX_DEFINE(kp_input_mutex);
+
+/** Shell input messages */
+enum kp_input_msg {
+	/** Abort (Ctrl-C) */
+	KP_INPUT_MSG_ABORT,
+	/** Up arrow */
+	KP_INPUT_MSG_UP,
+	/** Down arrow */
+	KP_INPUT_MSG_DOWN,
+	/** Enter */
+	KP_INPUT_MSG_ENTER,
+};
+
+/** Shell input message queue */
+K_MSGQ_DEFINE(kp_input_msgq, sizeof(enum kp_input_msg),
+		16, sizeof(enum kp_input_msg));
+
+/** Shell input state */
+enum kp_input_st {
+	/** Base state, no special characters encountered */
+	KP_INPUT_ST_NONE,
+	/** Escape character encountered */
+	KP_INPUT_ST_ESC,
+	/** Control Sequence Introducer (CSI) encountered */
+	KP_INPUT_ST_CSI,
+	/** Control sequence intermediate byte(s) received */
+	KP_INPUT_ST_CSI_INT,
+};
+
+/** Current shell input state */
+enum kp_input_st kp_input_st;
+
+/**
+ * Reset tracked shell input state to start processing another session.
+ */
+static void
+kp_input_rset(void)
+{
+	k_mutex_lock(&kp_input_mutex, K_FOREVER);
+	kp_input_st = KP_INPUT_ST_NONE;
+	k_msgq_purge(&kp_input_msgq);
+	k_mutex_unlock(&kp_input_mutex);
+}
 
 /**
  * Process input from the bypassed shell of a scheduled command.
@@ -171,17 +214,77 @@ static volatile bool kp_cmd_aborted;
  * @param len   Data length.
  */
 static void
-kp_shell_input(const struct shell *shell, uint8_t *data, size_t len)
+kp_input_recv(const struct shell *shell, uint8_t *data, size_t len)
 {
+	enum kp_input_msg msg;
+	k_mutex_lock(&kp_input_mutex, K_FOREVER);
 	for (; len > 0; data++, len--) {
-		/* If Ctrl-C is pressed */
-		if (*data == 0x03) {
-			kp_cmd_aborted = true;
-			kp_act_abort(kp_act_power_curr);
-			shell_set_bypass(shell, NULL);
+		switch (kp_input_st) {
+		/* Base state */
+		case KP_INPUT_ST_NONE:
+			switch(*data) {
+			case 0x03: /* ETX (Ctrl-C) */
+				msg = KP_INPUT_MSG_ABORT;
+				k_msgq_put(&kp_input_msgq, &msg, K_FOREVER);
+				kp_act_abort(kp_act_power_curr);
+				shell_set_bypass(shell, NULL);
+				k_mutex_unlock(&kp_input_mutex);
+				return;
+			case 0x1b: /* ESC  */
+				kp_input_st = KP_INPUT_ST_ESC;
+				break;
+			}
+			break;
+		/* Esc received */
+		case KP_INPUT_ST_ESC:
+			switch (*data) {
+			case '[': /* CSI */
+				kp_input_st = KP_INPUT_ST_CSI;
+				break;
+			default:
+				/* Unknown or invalid ESC sequence */
+				kp_input_st = KP_INPUT_ST_NONE;
+				break;
+			}
+			break;
+		/* If an intermediate byte was received after a CSI */
+		case KP_INPUT_ST_CSI_INT:
+			/* If a parameter byte is received */
+			if ((*data >> 4) == 3) {
+				/* Invalid ESC sequence */
+				kp_input_st = KP_INPUT_ST_NONE;
+				break;
+			}
+			/* Fallthrough */
+		/* CSI has been received */
+		case KP_INPUT_ST_CSI:
+			switch (*data) {
+			case 'A': /* Up arrow */
+				msg = KP_INPUT_MSG_UP;
+				k_msgq_put(&kp_input_msgq, &msg, K_FOREVER);
+				kp_input_st = KP_INPUT_ST_NONE;
+				break;
+			case 'B': /* Down arrow */
+				msg = KP_INPUT_MSG_DOWN;
+				k_msgq_put(&kp_input_msgq, &msg, K_FOREVER);
+				kp_input_st = KP_INPUT_ST_NONE;
+				break;
+			default:
+				/* If it's an intermediate byte */
+				if ((*data >> 4) == 2) {
+					kp_input_st = KP_INPUT_ST_CSI_INT;
+				/* If it's anything but a parameter byte */
+				} else if ((*data >> 4) != 3) {
+					/* Finished or invalid ESC sequence */
+					kp_input_st = KP_INPUT_ST_NONE;
+				}
+				break;
+			}
 			break;
 		}
+
 	}
+	k_mutex_unlock(&kp_input_mutex);
 }
 
 /** Execute the "swing steps" command */
@@ -190,10 +293,11 @@ kp_cmd_swing(const struct shell *shell, size_t argc, char **argv)
 {
 	long steps;
 	enum kp_act_move_rc rc;
+	enum kp_input_msg msg;
 
 	/* Return to the shell and restart in an input-diverted thread */
-	kp_cmd_aborted = false;
-	KP_SHELL_YIELD(kp_cmd_swing, kp_shell_input);
+	KP_SHELL_YIELD(kp_cmd_swing, kp_input_recv);
+	kp_input_rset();
 
 	/* Parse arguments */
 	assert(argc == 2);
@@ -204,14 +308,19 @@ kp_cmd_swing(const struct shell *shell, size_t argc, char **argv)
 	}
 
 	/* Move */
+	shell_print(shell, "Swinging, press Ctrl-C to abort");
 	rc = kp_act_move_by(kp_act_power_curr, steps / 2);
-	while (rc == KP_ACT_MOVE_RC_OK && !kp_cmd_aborted) {
-		steps = -steps;
-		rc = kp_act_move_by(kp_act_power_curr, steps);
+	while (rc == KP_ACT_MOVE_RC_OK) {
+		if (!k_msgq_get(&kp_input_msgq, &msg, K_NO_WAIT) &&
+		    msg == KP_INPUT_MSG_ABORT) {
+			rc = KP_ACT_MOVE_RC_ABORTED;
+		} else {
+			steps = -steps;
+			rc = kp_act_move_by(kp_act_power_curr, steps);
+		}
 	}
-	if (rc == KP_ACT_MOVE_RC_OK && kp_cmd_aborted) {
-		rc = KP_ACT_MOVE_RC_ABORTED;
-	}
+
+	/* Report error, if any */
 	if (rc == KP_ACT_MOVE_RC_ABORTED) {
 		shell_error(shell, "Aborted");
 	} else if (rc == KP_ACT_MOVE_RC_OFF) {
