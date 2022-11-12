@@ -299,17 +299,23 @@ kp_cmd_swing(const struct shell *shell, size_t argc, char **argv)
 	enum kp_act_move_rc rc;
 	enum kp_input_msg msg;
 
-	/* Return to the shell and restart in an input-diverted thread */
-	KP_SHELL_YIELD(kp_cmd_swing, kp_input_recv);
-	kp_input_rset();
-
 	/* Parse arguments */
-	assert(argc == 2);
+	assert(argc == 2 || argc == (size_t)SSIZE_MAX + 2);
 	if (!kp_parse_non_negative_number(argv[1], &steps) || steps == 0) {
 		shell_error(shell, "Invalid number of steps: %s",
 				argv[1]);
 		return 1;
 	}
+
+	/* Check for power */
+	if (!kp_act_power_is_on(kp_act_power_curr)) {
+		shell_error(shell, "Actuator is off, aborting");
+		return 1;
+	}
+
+	/* Return to the shell and restart in an input-diverted thread */
+	KP_SHELL_YIELD(kp_cmd_swing, kp_input_recv);
+	kp_input_rset();
 
 	/* Move */
 	shell_print(shell, "Swinging, press Ctrl-C to abort");
@@ -347,6 +353,12 @@ kp_cmd_adjust(const struct shell *shell, size_t argc, char **argv)
 
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
+
+	/* Check for power */
+	if (!kp_act_power_is_on(kp_act_power_curr)) {
+		shell_error(shell, "Actuator is off, aborting");
+		return 1;
+	}
 
 	/* Return to the shell and restart in an input-diverted thread */
 	KP_SHELL_YIELD(kp_cmd_adjust, kp_input_recv);
