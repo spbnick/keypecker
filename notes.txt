@@ -260,6 +260,7 @@ We need tests for:
 ---
 Use Ctrl-C to abort exactly where you are, and Enter to stop nicely (e.g.
 return to the start point of "swing").
+	- done
 
 FIXME: Swing of a powered-off actuator requires Ctrl-C to exit
 	- fixed with a dirty trick

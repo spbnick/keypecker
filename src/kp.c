@@ -298,6 +298,7 @@ kp_cmd_swing(const struct shell *shell, size_t argc, char **argv)
 	long steps;
 	enum kp_act_move_rc rc;
 	enum kp_input_msg msg;
+	kp_act_pos start_pos;
 
 	/* Parse arguments */
 	assert(argc == 2 || argc == (size_t)SSIZE_MAX + 2);
@@ -317,13 +318,22 @@ kp_cmd_swing(const struct shell *shell, size_t argc, char **argv)
 	KP_SHELL_YIELD(kp_cmd_swing, kp_input_recv);
 	kp_input_rset();
 
+	/* Remember the start position */
+	start_pos = kp_act_locate();
+
 	/* Move */
-	shell_print(shell, "Swinging, press Ctrl-C to abort");
+	shell_print(shell, "Swinging, press Enter to stop, Ctrl-C to abort");
 	rc = kp_act_move_by(kp_act_power_curr, steps / 2);
 	while (rc == KP_ACT_MOVE_RC_OK) {
-		if (!k_msgq_get(&kp_input_msgq, &msg, K_NO_WAIT) &&
-		    msg == KP_INPUT_MSG_ABORT) {
-			rc = KP_ACT_MOVE_RC_ABORTED;
+		if (!k_msgq_get(&kp_input_msgq, &msg, K_NO_WAIT)) {
+			if (msg == KP_INPUT_MSG_ABORT) {
+				rc = KP_ACT_MOVE_RC_ABORTED;
+			} else if (msg == KP_INPUT_MSG_ENTER) {
+				/* Return to the start position */
+				rc = kp_act_move_to(start_pos);
+				/* And stop */
+				break;
+			}
 		} else {
 			steps = -steps;
 			rc = kp_act_move_by(kp_act_power_curr, steps);
@@ -367,24 +377,21 @@ kp_cmd_adjust(const struct shell *shell, size_t argc, char **argv)
 	/* Move */
 	shell_print(shell,
 		    "Press up and down arrow keys to move the actuator.");
-	shell_print(shell, "Press Ctrl-C to abort.");
+	shell_print(shell, "Press Enter to stop, Ctrl-C to abort.");
 	do {
 		/* Read next input message */
 		while (k_msgq_get(&kp_input_msgq, &msg, K_FOREVER) != 0);
-		switch (msg) {
-		case KP_INPUT_MSG_UP:
-		case KP_INPUT_MSG_DOWN:
+		if (msg == KP_INPUT_MSG_UP || msg == KP_INPUT_MSG_DOWN) {
 			rc = kp_act_move_by(
 				kp_act_power_curr,
 				(msg == KP_INPUT_MSG_DOWN) ? 1 : -1
 			);
-			break;
-		case KP_INPUT_MSG_ABORT:
+		} else if (msg == KP_INPUT_MSG_ABORT) {
 			rc = KP_ACT_MOVE_RC_ABORTED;
+		} else if (msg == KP_INPUT_MSG_ENTER) {
 			break;
-		default:
+		} else {
 			rc = KP_ACT_MOVE_RC_OK;
-			break;
 		}
 	} while (rc == KP_ACT_MOVE_RC_OK);
 
