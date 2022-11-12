@@ -50,6 +50,16 @@ kp_shell_thread_fn(void *p1, void *p2, void *p3)
 			kp_shell_scheduled_argv
 		);
 
+		/*
+		 * Dirty-dirty trick to be able to remove the bypass outside
+		 * the callback and produce a relatively-normal prompt again.
+		 */
+		if (kp_shell_scheduled_shell->ctx->bypass /* Dirty! */) {
+			shell_set_bypass(kp_shell_scheduled_shell, NULL);
+			shell_stop(kp_shell_scheduled_shell);
+			shell_start(kp_shell_scheduled_shell);
+		}
+
 		/* Signal another command can be scheduled */
 		k_sem_give(&kp_shell_available);
 	}

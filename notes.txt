@@ -235,3 +235,31 @@ Control key inputs:
 0x1b 0x5b 0x44 - Left
 0x0d - Enter
 ---
+
+So, how should we record our pressure/report times? We can find out which step
+triggers the report by calibrating/aiming. Then, before we request moving the
+actuator the required number of steps to traverse the report point, in either
+direction, we register the current time and the type of the movement
+(press/release). After the movement is done, we wait for the report (timestamp
+message from GPIO ISR on a message queue?).
+
+OK, we can get a sequence of movement and trigger timestamp pairs in our
+testing routine. Now what do we do with that?
+
+We need tests for:
+	Detection/report latency for both press and release events
+		Take timestamp, move as fast as possible, take signal
+		timestamp
+		Repeat a bunch of times
+		Calculate and report latency minimum, maximum, and averages
+	Detection/report reliability/debouncing of both press and release
+		Move the actuator with the specified speed
+		Wait some time
+		Check how many signals we get
+		Repeat a bunch of times with varying speed and swing
+---
+Use Ctrl-C to abort exactly where you are, and Enter to stop nicely (e.g.
+return to the start point of "swing").
+
+FIXME: Swing of a powered-off actuator requires Ctrl-C to exit
+	- fixed with a dirty trick
