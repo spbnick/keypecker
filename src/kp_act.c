@@ -9,6 +9,7 @@
  */
 
 #include "kp_act.h"
+#include <zephyr/kernel.h>
 
 /*
  * Only changed upon initialization.
