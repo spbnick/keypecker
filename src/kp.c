@@ -452,7 +452,26 @@ main(void)
 	const struct device *dev;
 	uint32_t dtr = 0;
 
-	/* Initialize shell extensions */
+	/* Initialize USB */
+	if (usb_enable(NULL)) {
+		return;
+	}
+
+	/* Check shell UART is ready */
+	dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_shell_uart));
+	if (!device_is_ready(dev)) {
+		return;
+	}
+
+	/*
+	 * Wait for DTR on shell UART
+	 */
+	while (!dtr) {
+		uart_line_ctrl_get(dev, UART_LINE_CTRL_DTR, &dtr);
+		k_sleep(K_MSEC(100));
+	}
+
+	/* Initialize the shell extensions */
 	kp_shell_init();
 
 	/*
@@ -467,17 +486,4 @@ main(void)
 	 * Initialize the actuator
 	 */
 	kp_act_init(kp_gpio, /* disable */ 3, /* dir */ 8, /* step */ 9);
-
-	/*
-	 * Initialize shell UART
-	 */
-	dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_shell_uart));
-	if (!device_is_ready(dev) || usb_enable(NULL)) {
-		return;
-	}
-
-	while (!dtr) {
-		uart_line_ctrl_get(dev, UART_LINE_CTRL_DTR, &dtr);
-		k_sleep(K_MSEC(100));
-	}
 }

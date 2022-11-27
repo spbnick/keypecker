@@ -7,6 +7,7 @@
 / {
 	chosen {
 		zephyr,shell-uart = &cdc_acm_uart0;
+		zephyr,console = &cdc_acm_uart0;
 	};
 };
 
@@ -16,6 +17,9 @@
 	};
 };
 
+&usart1 {
+	status = "disabled";
+};
 &usart2 {
 	status = "disabled";
 };
