@@ -9,7 +9,6 @@
  */
 
 #include "kp_act.h"
-#include <zephyr/kernel.h>
 
 /*
  * Only changed upon initialization.
@@ -54,17 +53,21 @@ static volatile bool kp_act_move_aborted;
 /*
  * Movement state accessed by move.../locate functions
  */
-/** The additional mutex protecting the movement state */
-static K_MUTEX_DEFINE(kp_act_move_mutex);
 
-/** Execute the following statement with movement mutex held */
-#define KP_ACT_WITH_MOVE_MUTEX \
-	for (int _i = (k_mutex_lock(&kp_act_move_mutex, K_FOREVER), 0); \
-	     _i == 0; \
-	     _i = (k_mutex_unlock(&kp_act_move_mutex), 1))
+/** The semaphore signaling a movement can be started */
+static K_SEM_DEFINE(kp_act_move_available, 1, 1);
+
+/** The semaphore signaling a movement should begin */
+static K_SEM_DEFINE(kp_act_move_begin, 0, 1);
 
 /** The move target position, in steps */
 static int32_t kp_act_target_steps;
+
+/** The semaphore signaling a movement is done */
+static K_SEM_DEFINE(kp_act_move_done, 0, 1);
+
+/** The move result, only valid when kp_act_move_done is available */
+static volatile enum kp_act_move_rc kp_act_move_rc;
 
 /*
  * End of state
@@ -153,52 +156,30 @@ static K_TIMER_DEFINE(kp_act_move_timer, NULL, NULL);
 		}                                               \
 	} while (0)
 
-enum kp_act_move_rc
-kp_act_move(kp_act_power power, bool relative, int32_t steps)
+void
+kp_act_move_thread_fn(void *arg1, void *arg2, void *arg3)
 {
-	enum kp_act_move_rc rc;
-	assert(kp_act_power_is_valid(power));
 	assert(kp_act_is_initialized());
-	KP_ACT_WITH_MOVE_MUTEX {
-		/* Start the timer */
-		KP_ACT_WITH_MUTEX {
-			/* If we have the current power on */
-			if (!kp_act_power_is_on(power) ||
-			    power != kp_act_power_curr) {
-				rc = KP_ACT_MOVE_RC_OFF;
-				continue;
-			}
-			rc = KP_ACT_MOVE_RC_OK;
-			/* Calculate target steps */
-			kp_act_target_steps =
-				relative ? kp_act_pos_steps + steps : steps;
-			/* If we don't have to move */
-			if (kp_act_target_steps == kp_act_pos_steps) {
-				continue;
-			}
-			kp_act_move_aborted = false;
-			k_timer_start(&kp_act_move_timer,
-					KP_ACT_MOVE_TIMER_PERIOD,
-					KP_ACT_MOVE_TIMER_PERIOD);
-		}
 
+	/* While we can get the "begin" semaphore */
+	while (k_sem_take(&kp_act_move_begin, K_FOREVER) == 0) {
 		/* Run the timer */
 		while (true) {
 			/* Control */
 			KP_ACT_MOVE_TIMER_SYNC(stop);
 			KP_ACT_WITH_MUTEX {
 				if (!kp_act_power_is_on(kp_act_power_curr)) {
-					rc = KP_ACT_MOVE_RC_OFF;
+					kp_act_move_rc = KP_ACT_MOVE_RC_OFF;
 					k_timer_stop(&kp_act_move_timer);
 					continue;
 				}
 				if (kp_act_move_aborted) {
-					rc = KP_ACT_MOVE_RC_ABORTED;
+					kp_act_move_rc = KP_ACT_MOVE_RC_ABORTED;
 					k_timer_stop(&kp_act_move_timer);
 					continue;
 				}
 				if (kp_act_target_steps == kp_act_pos_steps) {
-					rc = KP_ACT_MOVE_RC_OK;
+					kp_act_move_rc = KP_ACT_MOVE_RC_OK;
 					k_timer_stop(&kp_act_move_timer);
 					continue;
 				}
@@ -222,13 +203,87 @@ kp_act_move(kp_act_power power, bool relative, int32_t steps)
 			gpio_pin_set(kp_act_gpio, kp_act_gpio_pin_step, 0);
 		}
 stop:;
+		k_sem_give(&kp_act_move_done);
 	}
-
-	return rc;
 }
 
 #undef KP_ACT_MOVE_TIMER_SYNC
 
+/** The thread moving the actuator */
+K_THREAD_DEFINE(kp_act_move_thread, 512,
+		kp_act_move_thread_fn, NULL, NULL, NULL,
+		-1, 0, -1);
+
+void
+kp_act_start_move(kp_act_power power, bool relative, int32_t steps)
+{
+	bool started = false;
+	assert(kp_act_power_is_valid(power));
+	assert(kp_act_is_initialized());
+
+	/* Wait for a move to be available */
+	k_sem_take(&kp_act_move_available, K_FOREVER);
+
+	/* Start the timer */
+	KP_ACT_WITH_MUTEX {
+		/* If we have the power off */
+		if (!kp_act_power_is_on(power) ||
+		    power != kp_act_power_curr) {
+			kp_act_move_rc = KP_ACT_MOVE_RC_OFF;
+			continue;
+		}
+		/* Calculate target steps */
+		kp_act_target_steps =
+			relative ? kp_act_pos_steps + steps : steps;
+		/* If we don't have to move */
+		if (kp_act_target_steps == kp_act_pos_steps) {
+			kp_act_move_rc = KP_ACT_MOVE_RC_OK;
+			continue;
+		}
+		kp_act_move_aborted = false;
+		k_timer_start(&kp_act_move_timer,
+				KP_ACT_MOVE_TIMER_PERIOD,
+				KP_ACT_MOVE_TIMER_PERIOD);
+		started = true;
+	}
+
+	if (started) {
+		/* Begin the move */
+		k_sem_give(&kp_act_move_begin);
+	} else {
+		/* Complete the move */
+		k_sem_give(&kp_act_move_done);
+	}
+}
+
+void
+kp_act_finish_move_event_init(struct k_poll_event *event)
+{
+	assert(kp_act_is_initialized());
+	k_poll_event_init(event, K_POLL_TYPE_SEM_AVAILABLE,
+			  K_POLL_MODE_NOTIFY_ONLY, &kp_act_move_done);
+}
+
+enum kp_act_move_rc
+kp_act_finish_move(k_timeout_t timeout)
+{
+	enum kp_act_move_rc rc;
+	assert(kp_act_is_initialized());
+
+	/* Wait for the move to finish */
+	if (k_sem_take(&kp_act_move_done, timeout)) {
+		return KP_ACT_MOVE_TIMEOUT;
+	}
+
+	/* Remember the result */
+	rc = kp_act_move_rc;
+
+	/* Mark next move as available */
+	k_sem_give(&kp_act_move_available);
+
+	/* Return the remembered result */
+	return rc;
+}
 
 bool
 kp_act_abort(kp_act_power power)
@@ -285,4 +340,9 @@ kp_act_init(const struct device *gpio,
 
 	/* Mark actuator initialized */
 	kp_act_gpio = gpio;
+
+	/* Start the actuator-moving thread */
+	k_thread_start(kp_act_move_thread);
+
+	assert(kp_act_is_initialized());
 }

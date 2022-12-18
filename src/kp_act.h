@@ -12,6 +12,7 @@
 #define KP_ACT_H_
 
 #include <zephyr/drivers/gpio.h>
+#include <zephyr/kernel.h>
 #include <stdbool.h>
 #include <assert.h>
 
@@ -180,7 +181,40 @@ enum kp_act_move_rc {
 	KP_ACT_MOVE_RC_ABORTED,
 	/** Actuator is off (power is invalid) */
 	KP_ACT_MOVE_RC_OFF,
+	/** Waiting for a move to finish timed out */
+	KP_ACT_MOVE_TIMEOUT,
 };
+
+/**
+ * Start moving the actuator.
+ *
+ * @param power		The power with which the actuator is moved (must be
+ *			valid).
+ * @param relative	True if the move is relative, false if absolute.
+ * @param steps		The number of steps to move by, if "relative" is true
+ * 			(positive - lower, negative - higher),
+ * 			the absolute position within the power, in steps, if
+ * 			"relative" is false.
+ */
+extern void kp_act_start_move(kp_act_power power,
+			      bool relative, int32_t steps);
+
+/**
+ * Finish moving the actuator.
+ *
+ * @param timeout	The time to wait for the move to finish, or one of
+ * 			the special values K_NO_WAIT and K_FOREVER.
+ *
+ * @return The move result code.
+ */
+extern enum kp_act_move_rc kp_act_finish_move(k_timeout_t timeout);
+
+/**
+ * Initialize a poll event to wait for finished actuator moves.
+ *
+ * @param event	The poll event to initialize.
+ */
+extern void kp_act_finish_move_event_init(struct k_poll_event *event);
 
 /**
  * Move the actuator.
@@ -195,8 +229,15 @@ enum kp_act_move_rc {
  *
  * @return The move result code.
  */
-extern enum kp_act_move_rc kp_act_move(kp_act_power power,
-				       bool relative, int32_t steps);
+static inline enum kp_act_move_rc kp_act_move(kp_act_power power,
+					      bool relative, int32_t steps)
+{
+	assert(kp_act_power_is_valid(power));
+	assert(kp_act_is_initialized());
+	kp_act_start_move(power, relative, steps);
+	return kp_act_finish_move(K_FOREVER);
+}
+
 /**
  * Move the actuator to a powered absolute position.
  * Waits for the previous move to be finished/aborted.
@@ -216,6 +257,22 @@ kp_act_move_to(kp_act_pos pos)
 }
 
 /**
+ * Start moving the actuator to a powered absolute position.
+ * Waits for the previous move to be finished/aborted.
+ *
+ * @param pos	The powered absolute position to move the actuator to (must be
+ *		valid).
+ */
+static inline void
+kp_act_start_move_to(kp_act_pos pos)
+{
+	assert(kp_act_pos_is_valid(pos));
+	assert(kp_act_is_initialized());
+	kp_act_start_move(kp_act_pos_get_power(pos),
+			  false, kp_act_pos_get_steps(pos));
+}
+
+/**
  * Move the actuator by a specified number of steps.
  *
  * @param power	The power with which to move the actuator (must be valid).
@@ -230,6 +287,23 @@ kp_act_move_by(kp_act_power power, int32_t steps)
 	assert(kp_act_power_is_valid(power));
 	assert(kp_act_is_initialized());
 	return kp_act_move(power, true, steps);
+}
+
+/**
+ * Start moving the actuator by a specified number of steps.
+ *
+ * @param power	The power with which to move the actuator (must be valid).
+ * @param steps	The number of steps to move by: positive values
+ * 		- lower, negative - higher.
+ *
+ * @return The movement result.
+ */
+static inline void
+kp_act_start_move_by(kp_act_power power, int32_t steps)
+{
+	assert(kp_act_power_is_valid(power));
+	assert(kp_act_is_initialized());
+	kp_act_start_move(power, true, steps);
 }
 
 /**
