@@ -8,5 +8,6 @@ target_sources(
 	app PRIVATE
 	src/kp.c
 	src/kp_shell.c
+	src/kp_input.c
 	src/kp_act.c
 )
