@@ -291,14 +291,50 @@ kp_input_recv(const struct shell *shell, uint8_t *data, size_t len)
 	k_mutex_unlock(&kp_input_mutex);
 }
 
+/**
+ * Initialize a poll event to wait for shell input.
+ *
+ * @param event	The poll event to initialize.
+ */
+static void
+kp_input_get_event_init(struct k_poll_event *event)
+{
+	k_poll_event_init(event, K_POLL_TYPE_MSGQ_DATA_AVAILABLE,
+			  K_POLL_MODE_NOTIFY_ONLY, &kp_input_msgq);
+}
+
+/**
+ * Get the next input message.
+ *
+ * @param msg		Location for the retrieved message.
+ * @param timeout	The time to wait for the message to arrive, or one of
+ * 			the special values K_NO_WAIT and K_FOREVER.
+ *
+ * @retval 0 Message received.
+ * @retval -ENOMSG Returned without waiting.
+ * @retval -EAGAIN Waiting period timed out.
+ */
+static int
+kp_input_get(enum kp_input_msg *msg, k_timeout_t timeout)
+{
+	return k_msgq_get(&kp_input_msgq, msg, timeout);
+}
+
 /** Execute the "swing steps" command */
 static int
 kp_cmd_swing(const struct shell *shell, size_t argc, char **argv)
 {
+	/* Poll event indices */
+	enum {
+		EVENT_IDX_INPUT = 0,
+		EVENT_IDX_ACT_FINISH_MOVE,
+		EVENT_NUM
+	};
 	long steps;
 	enum kp_act_move_rc rc;
 	enum kp_input_msg msg;
 	kp_act_pos start_pos;
+	struct k_poll_event events[EVENT_NUM];
 
 	/* Parse arguments */
 	assert(argc == 2 || argc == (size_t)SSIZE_MAX + 2);
@@ -321,23 +357,45 @@ kp_cmd_swing(const struct shell *shell, size_t argc, char **argv)
 	/* Remember the start position */
 	start_pos = kp_act_locate();
 
+	/* Initialize events */
+	kp_input_get_event_init(&events[EVENT_IDX_INPUT]);
+	kp_act_finish_move_event_init(&events[EVENT_IDX_ACT_FINISH_MOVE]);
+
 	/* Move */
 	shell_print(shell, "Swinging, press Enter to stop, Ctrl-C to abort");
 	rc = kp_act_move_by(kp_act_power_curr, steps / 2);
-	while (rc == KP_ACT_MOVE_RC_OK) {
-		if (!k_msgq_get(&kp_input_msgq, &msg, K_NO_WAIT)) {
-			if (msg == KP_INPUT_MSG_ABORT) {
-				rc = KP_ACT_MOVE_RC_ABORTED;
-			} else if (msg == KP_INPUT_MSG_ENTER) {
-				/* Return to the start position */
-				rc = kp_act_move_to(start_pos);
-				/* And stop */
-				break;
+	bool finished = false;
+	while (rc == KP_ACT_MOVE_RC_OK && !finished) {
+		bool moved = false;
+		steps = -steps;
+		kp_act_start_move_by(kp_act_power_curr, steps);
+		while (rc == KP_ACT_MOVE_RC_OK && !moved) {
+			while (k_poll(events, ARRAY_SIZE(events), K_FOREVER) != 0);
+
+			if (events[EVENT_IDX_INPUT].state) {
+				while (kp_input_get(&msg, K_FOREVER) != 0);
+				if (msg == KP_INPUT_MSG_ABORT) {
+					kp_act_abort(kp_act_power_curr);
+				} else if (msg == KP_INPUT_MSG_ENTER) {
+					finished = true;
+				}
 			}
-		} else {
-			steps = -steps;
-			rc = kp_act_move_by(kp_act_power_curr, steps);
+
+			if (events[EVENT_IDX_ACT_FINISH_MOVE].state) {
+				rc = kp_act_finish_move(K_FOREVER);
+				moved = (rc == KP_ACT_MOVE_RC_OK);
+			}
+
+			/* Reset event state */
+			for (size_t i = 0; i < ARRAY_SIZE(events); i++) {
+				events[i].state = K_POLL_STATE_NOT_READY;
+			}
 		}
+	}
+
+	if (finished && rc == KP_ACT_MOVE_RC_OK) {
+		/* Return to the start position */
+		rc = kp_act_move_to(start_pos);
 	}
 
 	/* Report error, if any */
@@ -380,7 +438,7 @@ kp_cmd_adjust(const struct shell *shell, size_t argc, char **argv)
 	shell_print(shell, "Press Enter to stop, Ctrl-C to abort.");
 	do {
 		/* Read next input message */
-		while (k_msgq_get(&kp_input_msgq, &msg, K_FOREVER) != 0);
+		while (kp_input_get(&msg, K_FOREVER) != 0);
 		if (msg == KP_INPUT_MSG_UP || msg == KP_INPUT_MSG_DOWN) {
 			rc = kp_act_move_by(
 				kp_act_power_curr,
