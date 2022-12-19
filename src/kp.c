@@ -226,8 +226,6 @@ kp_input_recv(const struct shell *shell, uint8_t *data, size_t len)
 			case 0x03: /* ETX (Ctrl-C) */
 				msg = KP_INPUT_MSG_ABORT;
 				k_msgq_put(&kp_input_msgq, &msg, K_FOREVER);
-				kp_act_abort(kp_act_power_curr);
-				shell_set_bypass(shell, NULL);
 				k_mutex_unlock(&kp_input_mutex);
 				return;
 			case 0x0d: /* CR (Enter) */
