@@ -8,14 +8,18 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
+#include "kp_cap.h"
 #include "kp_act.h"
 #include "kp_shell.h"
 #include "kp_input.h"
+#include <stm32_ll_tim.h>
 #include <assert.h>
 #include <stdlib.h>
+#include <strings.h>
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/drivers/clock_control/stm32_clock_control.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/uart.h>
 #include <zephyr/usb/usb_device.h>
@@ -23,6 +27,9 @@
 
 /* Devicetree node identifier for the GPIO port */
 #define KP_GPIO_NODE DT_NODELABEL(gpiob)
+
+/* Devicetree node identifier for the timer */
+#define KP_TIMER_NODE DT_NODELABEL(timers1)
 
 /* The GPIO port device */
 static const struct device *kp_gpio = DEVICE_DT_GET(KP_GPIO_NODE);
@@ -348,22 +355,271 @@ kp_cmd_set_bottom(const struct shell *shell, size_t argc, char **argv)
 	return 1;
 }
 
+/** Capture channel configurations */
+static struct kp_cap_ch_conf kp_cap_ch_conf_list[KP_CAP_CH_NUM];
+
+static inline int
+kp_strcasecmp(const char *a, const char *b)
+{
+	return strncasecmp(a, b, MAX(strlen(a), strlen(b)));
+}
+
+/** Execute the "set ch <idx> on/off [rising/falling [<name>]]" command */
+static int
+kp_cmd_set_ch(const struct shell *shell, size_t argc, char **argv)
+{
+	long idx;
+	const char *arg;
+	struct kp_cap_ch_conf conf;
+	assert(argc >= 3);
+	assert(argc <= 5);
+
+	/* Parse channel index */
+	arg = argv[1];
+	if (!kp_parse_non_negative_number(arg, &idx) ||
+			idx >= ARRAY_SIZE(kp_cap_ch_conf_list)) {
+		shell_error(
+			shell,
+			"Invalid channel index (0-%zu expected): %s",
+			ARRAY_SIZE(kp_cap_ch_conf_list) - 1,
+			arg
+		);
+		return 1;
+	}
+
+	/* Read current state */
+	conf = kp_cap_ch_conf_list[idx];
+
+	/* Parse capture status, if specified */
+	if (argc >= 3) {
+		arg = argv[2];
+		if (kp_strcasecmp(arg, "on") == 0) {
+			conf.capture = true;
+		} else if (kp_strcasecmp(arg, "off") == 0) {
+			conf.capture = false;
+		} else {
+			shell_error(
+				shell,
+				"Invalid capture status "
+				"(on/off expected): %s",
+				arg
+			);
+			return 1;
+		}
+	}
+
+	/* Parse capture edge, if specified */
+	if (argc >= 4) {
+		arg = argv[3];
+		if (kp_strcasecmp(arg, "rising") == 0) {
+			conf.rising = true;
+		} else if (kp_strcasecmp(arg, "falling") == 0) {
+			conf.rising = false;
+		} else {
+			shell_error(
+				shell,
+				"Invalid capture edge "
+				"(rising/falling expected): %s",
+				arg
+			);
+			return 1;
+		}
+	}
+
+	/* Read name, if specified */
+	if (argc >= 5) {
+		arg = argv[4];
+		if (strlen(arg) >= sizeof(conf.name)) {
+			shell_error(
+				shell,
+				"Channel name too long "
+				"(%zu > %zu expected characters): %s",
+				strlen(arg),
+				sizeof(conf.name) - 1,
+				arg
+			);
+			return 1;
+		}
+		strcpy(conf.name, arg);
+	}
+
+	/* Store the parameters */
+	kp_cap_ch_conf_list[idx] = conf;
+
+	return 0;
+}
+
 SHELL_STATIC_SUBCMD_SET_CREATE(set_subcmds,
 	SHELL_CMD(top, NULL, "Register current position as the top",
 			kp_cmd_set_top),
 	SHELL_CMD(bottom, NULL, "Register current position as the bottom",
 			kp_cmd_set_bottom),
+	SHELL_CMD_ARG(ch, NULL,
+			"Set channel configuration: "
+			"<idx> on/off [rising/falling [<name>]]",
+			kp_cmd_set_ch, 3, 2),
 	SHELL_SUBCMD_SET_END
 );
 
 SHELL_CMD_REGISTER(set, &set_subcmds,
-			"Register current actuator position", NULL);
+			"Set parameters", NULL);
 
+/** Execute the "get top" command */
+static int
+kp_cmd_get_top(const struct shell *shell, size_t argc, char **argv)
+{
+	enum kp_act_move_rc rc;
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+	if (!kp_act_pos_is_valid(kp_pos_top)) {
+		shell_error(shell, "Top position not set, not moving");
+		return 1;
+	}
+	rc = kp_act_move_to(kp_pos_top);
+	if (rc == KP_ACT_MOVE_RC_ABORTED) {
+		shell_error(shell, "Aborted");
+	} else if (rc == KP_ACT_MOVE_RC_OFF) {
+		shell_error(shell, "Actuator is off, stopping");
+	}
+	return rc != KP_ACT_MOVE_RC_OK;
+}
+
+/** Execute the "get bottom" command */
+static int
+kp_cmd_get_bottom(const struct shell *shell, size_t argc, char **argv)
+{
+	enum kp_act_move_rc rc;
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+	if (!kp_act_pos_is_valid(kp_pos_bottom)) {
+		shell_error(shell, "Bottom position not set, not moving");
+		return 1;
+	}
+	rc = kp_act_move_to(kp_pos_bottom);
+	if (rc == KP_ACT_MOVE_RC_ABORTED) {
+		shell_error(shell, "Aborted");
+	} else if (rc == KP_ACT_MOVE_RC_OFF) {
+		shell_error(shell, "Actuator is off, stopping");
+	}
+	return rc != KP_ACT_MOVE_RC_OK;
+}
+
+/** Execute the "get ch <idx>" command */
+static int
+kp_cmd_get_ch(const struct shell *shell, size_t argc, char **argv)
+{
+	long idx;
+	const char *arg;
+	const struct kp_cap_ch_conf *conf;
+
+	assert(argc == 2);
+
+	/* Parse channel index */
+	arg = argv[1];
+	if (!kp_parse_non_negative_number(arg, &idx) ||
+			idx >= ARRAY_SIZE(kp_cap_ch_conf_list)) {
+		shell_error(
+			shell,
+			"Invalid channel index (0-%zu expected): %s",
+			ARRAY_SIZE(kp_cap_ch_conf_list) - 1,
+			arg
+		);
+		return 1;
+	}
+
+	/* Output channel configuration */
+	conf = &kp_cap_ch_conf_list[idx];
+	shell_print(shell, "%s %s %s",
+			(conf->capture ? "on" : "off"),
+			(conf->rising ? "rising" : "falling"),
+			conf->name);
+	return 0;
+}
+
+SHELL_STATIC_SUBCMD_SET_CREATE(get_subcmds,
+	SHELL_CMD(top, NULL, "Restore the top position",
+			kp_cmd_get_top),
+	SHELL_CMD(bottom, NULL, "Restore the bottom position",
+			kp_cmd_get_bottom),
+	SHELL_CMD_ARG(ch, NULL,
+			"Get channel configuration: "
+			"<idx> -> on/off rising/falling <name>",
+			kp_cmd_get_ch, 2, 0),
+	SHELL_SUBCMD_SET_END
+);
+
+SHELL_CMD_REGISTER(get, &get_subcmds,
+			"Get parameters", NULL);
+
+/** Execute the "measure" command */
+static int
+kp_cmd_measure(const struct shell *shell, size_t argc, char **argv)
+{
+	enum kp_cap_rc rc;
+	struct kp_cap_ch_res ch_res_list[ARRAY_SIZE(kp_cap_ch_conf_list)];
+
+	/* Check for power */
+	if (!kp_act_power_is_on(kp_act_power_curr)) {
+		shell_error(shell, "Actuator is off, aborting");
+		return 1;
+	}
+
+	/* Return to the shell and restart in an input-diverted thread */
+	KP_SHELL_YIELD(kp_cmd_measure, kp_input_bypass_cb);
+	kp_input_reset();
+
+	/* Capture */
+	kp_cap_start(kp_cap_ch_conf_list, ARRAY_SIZE(kp_cap_ch_conf_list),
+			1000000);
+	rc = kp_cap_finish(ch_res_list, ARRAY_SIZE(ch_res_list), K_FOREVER);
+
+	/* Output results */
+	if (rc == KP_CAP_RC_OK) {
+		for (size_t i = 0; i < ARRAY_SIZE(ch_res_list); i++) {
+			struct kp_cap_ch_conf *ch_conf =
+				&kp_cap_ch_conf_list[i];
+			struct kp_cap_ch_res *ch_res = &ch_res_list[i];
+			const char *status_str =
+				kp_cap_ch_status_to_str(ch_res->status);
+			switch (ch_res->status) {
+			case KP_CAP_CH_STATUS_DISABLED:
+				break;
+			case KP_CAP_CH_STATUS_OK:
+			case KP_CAP_CH_STATUS_OVERCAPTURE:
+				shell_print(
+					shell, "#%zu: %-15s %-11s %7u us",
+					i, ch_conf->name, status_str,
+					ch_res->value_us
+				);
+				break;
+			default:
+				shell_print(
+					shell, "#%zu: %-15s %-11s",
+					i, ch_conf->name, status_str
+				);
+				break;
+			}
+		}
+	}
+	shell_print(shell, "%s",
+		    rc == KP_CAP_RC_TIMEOUT ? "TIMEOUT" :
+		    (rc == KP_CAP_RC_ABORTED ? "ABORTED" :
+		     (rc == KP_CAP_RC_OK ? "OK" : "UNKNOWN")));
+	return rc == KP_CAP_RC_OK;
+}
+
+SHELL_CMD_ARG_REGISTER(measure, NULL,
+			"Move actuator between top and bottom positions, "
+			"capturing the timing on all enabled channels",
+			kp_cmd_measure, 1, 0);
+
+#define TIMER_NODE
 void
 main(void)
 {
 	const struct device *dev;
 	uint32_t dtr = 0;
+	size_t i;
 
 	/* Initialize USB */
 	if (usb_enable(NULL)) {
@@ -399,4 +655,39 @@ main(void)
 	 * Initialize the actuator
 	 */
 	kp_act_init(kp_gpio, /* disable */ 3, /* dir */ 8, /* step */ 9);
+
+	/*
+	 * Set default capture channel configuration
+	 */
+	for (i = 0; i < ARRAY_SIZE(kp_cap_ch_conf_list); i++) {
+		kp_cap_ch_conf_list[i] = (struct kp_cap_ch_conf){
+			.capture = false,
+			.rising = true,
+			.name = {0},
+		};
+	}
+
+	/*
+	 * Initialize the capturer
+	 */
+	const struct device *clk = DEVICE_DT_GET(STM32_CLOCK_CONTROL_NODE);
+	struct stm32_pclken pclken = {
+		.bus = DT_CLOCKS_CELL(KP_TIMER_NODE, bus),
+		.enr = DT_CLOCKS_CELL(KP_TIMER_NODE, bits)
+	};
+	if (!device_is_ready(clk)) {
+		return;
+	}
+	if (clock_control_on(clk, (clock_control_subsys_t *)&pclken) < 0) {
+		return;
+	}
+	IRQ_CONNECT(DT_IRQ_BY_NAME(KP_TIMER_NODE, up, irq),
+		    DT_IRQ_BY_NAME(KP_TIMER_NODE, up, priority),
+		    kp_cap_isr, NULL, 0);
+	irq_enable(DT_IRQ_BY_NAME(KP_TIMER_NODE, up, irq));
+	IRQ_CONNECT(DT_IRQ_BY_NAME(KP_TIMER_NODE, cc, irq),
+		    DT_IRQ_BY_NAME(KP_TIMER_NODE, cc, priority),
+		    kp_cap_isr, NULL, 0);
+	irq_enable(DT_IRQ_BY_NAME(KP_TIMER_NODE, cc, irq));
+	kp_cap_init((TIM_TypeDef *)DT_REG_ADDR(KP_TIMER_NODE));
 }

@@ -10,4 +10,5 @@ target_sources(
 	src/kp_shell.c
 	src/kp_input.c
 	src/kp_act.c
+	src/kp_cap.c
 )

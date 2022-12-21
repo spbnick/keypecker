@@ -45,6 +45,10 @@
 	swj-cfg = "jtag-disable";
 };
 
+&timers1 {
+	status = "okay";
+};
+
 &pwm1 {
 	status = "disabled";
 };

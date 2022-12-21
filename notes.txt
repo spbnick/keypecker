@@ -264,3 +264,67 @@ return to the start point of "swing").
 
 FIXME: Swing of a powered-off actuator requires Ctrl-C to exit
 	- fixed with a dirty trick
+---
+Trying to add a shell input reading function
+
+shell_thread
+    shell_process
+        switch (shell->ctx->state) {
+        case SHELL_STATE_ACTIVE:
+            shell_process
+                state_collect
+                    execute
+                        exec_cmd
+        }
+
+Can we avoid the extra thread?
+
+Nope, we gotta keep processing input
+
+Actually, maybe we can have that special function poll for the RXRDY signal
+
+Posted the failure on GitHub, waiting for advice/comments, continuing with the
+hack for now.
+---
+So, we need to have an STM32 timer started by a rising edge of the "step"
+signal, and a capture triggered by the signal we're interested in. If we want
+to have more than one input signal, we need more than one timer, or at least
+more than one channel. Gotta check that. OK, looks like we can have several
+inputs and registers to register the timing. Great!
+
+Now we gotta figure out which pins are available for which.
+OK, the pins are listed on page 179 of RM. Default mapping:
+
+CH1:	PA8
+CH2:	PA9
+CH3:	PA10
+CH4:	PA11
+ETR:	PA12
+
+Next we'll need to figure out if more configuration is needed on those.
+It's likely that it is needed, since there's an USART on PA8-9 by default.
+
+TODO:
+* Make sure USART doesn't interfere with the timer
+	- switch the pins to "alternate function push-pull" somehow
+* Make the timer start counting and overflow when movement starts
+
+OK, PA11 and PA12 are out of the game, as they're used by USB for D- and D+.
+So, we'll have to do with PA8, PA9, PA10. We could use PA10 for trigger, and
+PA8 and PA9 for signaling.
+
+Ah, it looks like only the first and the second input channels are connected
+to the slave mode controller and can trigger the counter. Well, channel three
+can do that too through a XOR gate with all other inputs, but we don't want to
+mess with that. So it would be the other way around:
+
+PA8:	Trigger
+PA9:	Capture channel 1
+PA10:	Capture channel 2
+
+When starting the capture you can specify which channels/how to capture.
+Then you can call a function requesting the result when/if it's ready.
+---
+TODO: Add support for awaiting overcapture for a bounce period
+TODO: Retrieve the timer clock rate, like the PWM driver does
+      (drivers/pwm/pwm_stm32.c)
