@@ -29,14 +29,15 @@ static gpio_pin_t kp_act_gpio_pin_step;
 /*
  * General state changed by all functions
  */
-/** The mutex protecting all the state */
-static K_MUTEX_DEFINE(kp_act_mutex);
+/** The spinlock protecting the base state */
+static struct k_spinlock kp_act_lock = {};
 
-/** Execute the following statement with state mutex held */
-#define KP_ACT_WITH_MUTEX \
-	for (int _i = (k_mutex_lock(&kp_act_mutex, K_FOREVER), 0); \
-	     _i == 0; \
-	     _i = (k_mutex_unlock(&kp_act_mutex), 1))
+/** Execute the following statement with base state lock held */
+#define KP_ACT_WITH_LOCK \
+	for (k_spinlock_key_t _key = k_spin_lock(&kp_act_lock), \
+			      _i = {0}; \
+	     _i.key == 0; \
+	     k_spin_unlock(&kp_act_lock, _key), _i.key = 1)
 
 /** The current actuator position, in steps */
 static volatile int32_t kp_act_pos;
@@ -94,7 +95,7 @@ kp_act_is_off(void)
 {
 	bool is_off;
 	assert(kp_act_is_initialized());
-	KP_ACT_WITH_MUTEX {
+	KP_ACT_WITH_LOCK {
 		is_off = kp_act_is_off_locked();
 	}
 	return is_off;
@@ -105,7 +106,7 @@ kp_act_on(void)
 {
 	bool turned_on = false;
 	assert(kp_act_is_initialized());
-	KP_ACT_WITH_MUTEX {
+	KP_ACT_WITH_LOCK {
 		if (kp_act_is_off_locked()) {
 			gpio_pin_set(kp_act_gpio, kp_act_gpio_pin_disable, 0);
 			turned_on = true;
@@ -119,7 +120,7 @@ kp_act_off(void)
 {
 	bool turned_off = false;
 	assert(kp_act_is_initialized());
-	KP_ACT_WITH_MUTEX {
+	KP_ACT_WITH_LOCK {
 		/* If we're moving, the move aborts with KP_ACT_MOVE_RC_OFF */
 		if (kp_act_is_on_locked()) {
 			gpio_pin_set(kp_act_gpio, kp_act_gpio_pin_disable, 1);
@@ -135,7 +136,7 @@ kp_act_locate(void)
 {
 	int32_t pos;
 	assert(kp_act_is_initialized());
-	KP_ACT_WITH_MUTEX {
+	KP_ACT_WITH_LOCK {
 		pos = kp_act_is_on_locked()
 			? kp_act_pos
 			: KP_ACT_POS_INVALID;
@@ -173,7 +174,7 @@ kp_act_move_thread_fn(void *arg1, void *arg2, void *arg3)
 		while (true) {
 			/* Control */
 			KP_ACT_MOVE_TIMER_SYNC(stop);
-			KP_ACT_WITH_MUTEX {
+			KP_ACT_WITH_LOCK {
 				if (kp_act_is_off_locked()) {
 					kp_act_move_rc = KP_ACT_MOVE_RC_OFF;
 					k_timer_stop(&kp_act_move_timer);
@@ -197,7 +198,7 @@ kp_act_move_thread_fn(void *arg1, void *arg2, void *arg3)
 			gpio_pin_set(kp_act_gpio, kp_act_gpio_pin_step, 1);
 			/* Hold */
 			KP_ACT_MOVE_TIMER_SYNC(stop);
-			KP_ACT_WITH_MUTEX {
+			KP_ACT_WITH_LOCK {
 				if (kp_act_pos < kp_act_target) {
 					kp_act_pos++;
 				} else {
@@ -231,7 +232,7 @@ kp_act_start_move(bool relative, int32_t steps)
 	k_sem_take(&kp_act_move_available, K_FOREVER);
 
 	/* Start the timer */
-	KP_ACT_WITH_MUTEX {
+	KP_ACT_WITH_LOCK {
 		/* If we have the power off */
 		if (kp_act_is_off_locked()) {
 			kp_act_move_rc = KP_ACT_MOVE_RC_OFF;
@@ -295,7 +296,7 @@ kp_act_abort(void)
 {
 	bool aborted = false;
 	assert(kp_act_is_initialized());
-	KP_ACT_WITH_MUTEX {
+	KP_ACT_WITH_LOCK {
 		if (kp_act_is_off_locked()) {
 			continue;
 		}
