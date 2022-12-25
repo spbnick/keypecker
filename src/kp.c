@@ -38,10 +38,10 @@ static const struct device *kp_gpio = DEVICE_DT_GET(KP_GPIO_NODE);
 static const gpio_pin_t KP_GPIO_PIN_TRIGGER = 4;
 
 /** Top actuator position */
-static int32_t kp_pos_top = KP_ACT_POS_INVALID;
+static int32_t kp_act_pos_top = KP_ACT_POS_INVALID;
 
 /** Bottom actuator position */
-static int32_t kp_pos_bottom = KP_ACT_POS_INVALID;
+static int32_t kp_act_pos_bottom = KP_ACT_POS_INVALID;
 
 /** Execute the "on" command */
 static int
@@ -64,8 +64,8 @@ kp_cmd_off(const struct shell *shell, size_t argc, char **argv)
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
 	if (kp_act_off()) {
-		kp_pos_top = KP_ACT_POS_INVALID;
-		kp_pos_bottom = KP_ACT_POS_INVALID;
+		kp_act_pos_top = KP_ACT_POS_INVALID;
+		kp_act_pos_bottom = KP_ACT_POS_INVALID;
 	} else {
 		shell_info(shell, "Actuator is already off");
 	}
@@ -324,8 +324,8 @@ kp_cmd_set_top(const struct shell *shell, size_t argc, char **argv)
 {
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
-	kp_pos_top = kp_act_locate();
-	if (kp_act_pos_is_valid(kp_pos_top)) {
+	kp_act_pos_top = kp_act_locate();
+	if (kp_act_pos_is_valid(kp_act_pos_top)) {
 		return 0;
 	}
 	shell_error(shell, "Actuator is off, position not set");
@@ -338,8 +338,8 @@ kp_cmd_set_bottom(const struct shell *shell, size_t argc, char **argv)
 {
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
-	kp_pos_bottom = kp_act_locate();
-	if (kp_act_pos_is_valid(kp_pos_bottom)) {
+	kp_act_pos_bottom = kp_act_locate();
+	if (kp_act_pos_is_valid(kp_act_pos_bottom)) {
 		return 0;
 	}
 	shell_error(shell, "Actuator is off, position not set");
@@ -462,11 +462,11 @@ kp_cmd_get_top(const struct shell *shell, size_t argc, char **argv)
 	enum kp_act_move_rc rc;
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
-	if (!kp_act_pos_is_valid(kp_pos_top)) {
+	if (!kp_act_pos_is_valid(kp_act_pos_top)) {
 		shell_error(shell, "Top position not set, not moving");
 		return 1;
 	}
-	rc = kp_act_move_to(kp_pos_top);
+	rc = kp_act_move_to(kp_act_pos_top);
 	if (rc == KP_ACT_MOVE_RC_ABORTED) {
 		shell_error(shell, "Aborted");
 	} else if (rc == KP_ACT_MOVE_RC_OFF) {
@@ -482,11 +482,11 @@ kp_cmd_get_bottom(const struct shell *shell, size_t argc, char **argv)
 	enum kp_act_move_rc rc;
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
-	if (!kp_act_pos_is_valid(kp_pos_bottom)) {
+	if (!kp_act_pos_is_valid(kp_act_pos_bottom)) {
 		shell_error(shell, "Bottom position not set, not moving");
 		return 1;
 	}
-	rc = kp_act_move_to(kp_pos_bottom);
+	rc = kp_act_move_to(kp_act_pos_bottom);
 	if (rc == KP_ACT_MOVE_RC_ABORTED) {
 		shell_error(shell, "Aborted");
 	} else if (rc == KP_ACT_MOVE_RC_OFF) {

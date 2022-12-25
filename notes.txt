@@ -336,3 +336,4 @@ However, we would still need to expose and to use it for relative movements.
 So, maybe we better get rid of the tracked power on altogether.
 
 TODO: Rename kp_pos_* to kp_act_pos_*
+	- done
