@@ -37,29 +37,22 @@ static const struct device *kp_gpio = DEVICE_DT_GET(KP_GPIO_NODE);
 /* The trigger input GPIO pin */
 static const gpio_pin_t KP_GPIO_PIN_TRIGGER = 4;
 
-/** Current actuator power */
-static kp_act_power kp_act_power_curr = KP_ACT_POWER_OFF;
-
 /** Top actuator position */
-static kp_act_pos kp_pos_top = KP_ACT_POS_INVALID;
+static int32_t kp_pos_top = KP_ACT_POS_INVALID;
 
 /** Bottom actuator position */
-static kp_act_pos kp_pos_bottom = KP_ACT_POS_INVALID;
+static int32_t kp_pos_bottom = KP_ACT_POS_INVALID;
 
 /** Execute the "on" command */
 static int
 kp_cmd_on(const struct shell *shell, size_t argc, char **argv)
 {
-	kp_act_power power;
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
-	power = kp_act_on();
-	if (kp_act_power_is_valid(power)) {
-		kp_act_power_curr = power;
-		return 0;
+	if (!kp_act_on()) {
+		shell_info(shell, "Actuator is already on");
 	}
-	shell_error(shell, "Actuator is already on");
-	return 1;
+	return 0;
 }
 
 SHELL_CMD_REGISTER(on, NULL, "Turn on actuator", kp_cmd_on);
@@ -70,14 +63,13 @@ kp_cmd_off(const struct shell *shell, size_t argc, char **argv)
 {
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
-	if (kp_act_off(kp_act_power_curr)) {
+	if (kp_act_off()) {
 		kp_pos_top = KP_ACT_POS_INVALID;
 		kp_pos_bottom = KP_ACT_POS_INVALID;
-		kp_act_power_curr = KP_ACT_POWER_OFF;
-		return 0;
+	} else {
+		shell_info(shell, "Actuator is already off");
 	}
-	shell_error(shell, "Actuator is already off");
-	return 1;
+	return 0;
 }
 
 SHELL_CMD_REGISTER(off, NULL, "Turn off actuator", kp_cmd_off);
@@ -119,7 +111,7 @@ kp_cmd_up(const struct shell *shell, size_t argc, char **argv)
 	} else {
 		steps = 1;
 	}
-	rc = kp_act_move_by(kp_act_power_curr, -steps);
+	rc = kp_act_move_by(-steps);
 	switch (rc) {
 		case KP_ACT_MOVE_RC_OFF:
 			shell_error(shell, "Actuator is off, stopping");
@@ -151,7 +143,7 @@ kp_cmd_down(const struct shell *shell, size_t argc, char **argv)
 	} else {
 		steps = 1;
 	}
-	rc = kp_act_move_by(kp_act_power_curr, steps);
+	rc = kp_act_move_by(steps);
 	switch (rc) {
 		case KP_ACT_MOVE_RC_OFF:
 			shell_error(shell, "Actuator is off, stopping");
@@ -195,7 +187,7 @@ kp_cmd_swing(const struct shell *shell, size_t argc, char **argv)
 	long steps;
 	enum kp_act_move_rc rc;
 	enum kp_input_msg msg;
-	kp_act_pos start_pos;
+	int32_t start_pos;
 	struct k_poll_event events[EVENT_NUM];
 
 	/* Parse arguments */
@@ -207,7 +199,7 @@ kp_cmd_swing(const struct shell *shell, size_t argc, char **argv)
 	}
 
 	/* Check for power */
-	if (!kp_act_power_is_on(kp_act_power_curr)) {
+	if (kp_act_is_off()) {
 		shell_error(shell, "Actuator is off, aborting");
 		return 1;
 	}
@@ -225,19 +217,19 @@ kp_cmd_swing(const struct shell *shell, size_t argc, char **argv)
 
 	/* Move */
 	shell_print(shell, "Swinging, press Enter to stop, Ctrl-C to abort");
-	rc = kp_act_move_by(kp_act_power_curr, steps / 2);
+	rc = kp_act_move_by(steps / 2);
 	bool finished = false;
 	while (rc == KP_ACT_MOVE_RC_OK && !finished) {
 		bool moved = false;
 		steps = -steps;
-		kp_act_start_move_by(kp_act_power_curr, steps);
+		kp_act_start_move_by(steps);
 		while (rc == KP_ACT_MOVE_RC_OK && !moved) {
 			while (k_poll(events, ARRAY_SIZE(events), K_FOREVER) != 0);
 
 			if (events[EVENT_IDX_INPUT].state) {
 				while (kp_input_get(&msg, K_FOREVER) != 0);
 				if (msg == KP_INPUT_MSG_ABORT) {
-					kp_act_abort(kp_act_power_curr);
+					kp_act_abort();
 				} else if (msg == KP_INPUT_MSG_ENTER) {
 					finished = true;
 				}
@@ -285,7 +277,7 @@ kp_cmd_adjust(const struct shell *shell, size_t argc, char **argv)
 	ARG_UNUSED(argv);
 
 	/* Check for power */
-	if (!kp_act_power_is_on(kp_act_power_curr)) {
+	if (kp_act_is_off()) {
 		shell_error(shell, "Actuator is off, aborting");
 		return 1;
 	}
@@ -303,7 +295,6 @@ kp_cmd_adjust(const struct shell *shell, size_t argc, char **argv)
 		while (kp_input_get(&msg, K_FOREVER) != 0);
 		if (msg == KP_INPUT_MSG_UP || msg == KP_INPUT_MSG_DOWN) {
 			rc = kp_act_move_by(
-				kp_act_power_curr,
 				(msg == KP_INPUT_MSG_DOWN) ? 1 : -1
 			);
 		} else if (msg == KP_INPUT_MSG_ABORT) {
@@ -559,7 +550,7 @@ kp_cmd_measure(const struct shell *shell, size_t argc, char **argv)
 	struct kp_cap_ch_res ch_res_list[ARRAY_SIZE(kp_cap_ch_conf_list)];
 
 	/* Check for power */
-	if (!kp_act_power_is_on(kp_act_power_curr)) {
+	if (kp_act_is_off()) {
 		shell_error(shell, "Actuator is off, aborting");
 		return 1;
 	}

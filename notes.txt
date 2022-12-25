@@ -328,3 +328,11 @@ Then you can call a function requesting the result when/if it's ready.
 TODO: Add support for awaiting overcapture for a bounce period
 TODO: Retrieve the timer clock rate, like the PWM driver does
       (drivers/pwm/pwm_stm32.c)
+---
+We can simplify the actuator's interface if we keep the current power
+module-side and don't force the caller remember and to provide it.
+
+However, we would still need to expose and to use it for relative movements.
+So, maybe we better get rid of the tracked power on altogether.
+
+TODO: Rename kp_pos_* to kp_act_pos_*

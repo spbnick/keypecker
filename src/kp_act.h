@@ -41,71 +41,41 @@ extern void kp_act_init(const struct device *gpio,
  */
 extern bool kp_act_is_initialized(void);
 
-/** Actuator power */
-typedef uint8_t kp_act_power;
-
-/** Power off */
-#define KP_ACT_POWER_OFF	(kp_act_power)0
-
-/** Minimum valid power-on */
-#define KP_ACT_POWER_ON_MIN	(kp_act_power)1
-
-/** Maximum valid power-on */
-#define KP_ACT_POWER_ON_MAX	(kp_act_power)(UINT8_MAX - 1)
-
-/** Invalid (unavailable) power */
-#define KP_ACT_POWER_INVALID	(kp_act_power)UINT8_MAX
+/**
+ * Check if the actuator power is off.
+ *
+ * @return True if the power is off, false if on.
+ */
+extern bool kp_act_is_off(void);
 
 /**
- * Check if the specified power is valid.
+ * Check if the actuator power is on.
  *
- * @param power	The power to check.
- *
- * @return True if the specified power is valid, false if off.
+ * @return True if the power is on, false if off.
  */
 static inline bool
-kp_act_power_is_valid(kp_act_power power)
+kp_act_is_on(void)
 {
-	return power != KP_ACT_POWER_INVALID;
-}
-
-/**
- * Check if the specified power is on.
- *
- * @param power	The power to check.
- *
- * @return True if the specified power is on, false if off.
- */
-static inline bool
-kp_act_power_is_on(kp_act_power power)
-{
-	return power >= KP_ACT_POWER_ON_MIN &&
-		power <= KP_ACT_POWER_ON_MAX;
+	assert(kp_act_is_initialized());
+	return !kp_act_is_off();
 }
 
 /**
  * Turn the actuator power on, if not on already.
  *
- * @return A valid power-on, if successful, or KP_ACT_POWER_INVALID, if the
- * 		power was already on.
+ * @return True if the power was turned on, false if it was already on.
  */
-extern kp_act_power kp_act_on(void);
+extern bool kp_act_on(void);
 
 /**
  * Turn the actuator power off.
  *
- * @param power	The power to turn off (must be valid).
- *
- * @return True if the power was on, and was turned off,
- * 	   false if the power was already off.
+ * @return True if the power turned off, false if it was already off.
  */
-extern bool kp_act_off(kp_act_power power);
-
-/** Position of a powered actuator ((steps << 8) | power) */
-typedef int32_t kp_act_pos;
+extern bool kp_act_off(void);
 
 /** Invalid (unavailable) actuator position */
-#define KP_ACT_POS_INVALID	(kp_act_pos)0
+#define KP_ACT_POS_INVALID	INT32_MIN
 
 /**
  * Check if a position is valid.
@@ -114,55 +84,9 @@ typedef int32_t kp_act_pos;
  *
  * @return True if the position is valid, false otherwise.
  */
-static inline bool kp_act_pos_is_valid(kp_act_pos pos)
+static inline bool kp_act_pos_is_valid(int32_t pos)
 {
 	return pos != KP_ACT_POS_INVALID;
-}
-
-/**
- * Create a powered position from a power and steps.
- *
- * @param power	The power to create position for (must be valid).
- * @param steps	The position steps to use.
- *
- * @return The created powered position.
- */
-static inline kp_act_pos
-kp_act_pos_create(kp_act_power power, int32_t steps)
-{
-	assert(kp_act_power_is_valid(power));
-	if (kp_act_power_is_on(power)) {
-		return (steps << 8) | power;
-	} else {
-		return KP_ACT_POS_INVALID;
-	}
-}
-
-/**
- * Retrieve the power of a position.
- *
- * @param pos	The position to retrieve the power from (must be valid).
- *
- * @return The retrieved power, or KP_ACT_POWER_OFF, if the power is off.
- */
-static inline kp_act_power
-kp_act_pos_get_power(kp_act_pos pos)
-{
-	assert(kp_act_pos_is_valid(pos));
-	return pos & 0xff;
-}
-
-/**
- * Retrieve the absolute steps of a position.
- *
- * @param pos	The position to retrieve the steps from.
- *
- * @return The retrieved steps.
- */
-static inline int32_t
-kp_act_pos_get_steps(kp_act_pos pos)
-{
-	return pos >> 8;
 }
 
 /**
@@ -171,7 +95,7 @@ kp_act_pos_get_steps(kp_act_pos pos)
  * @return The position, if successful, or KP_ACT_POS_INVALID, if the actuator
  * 	   is powered off.
  */
-extern kp_act_pos kp_act_locate(void);
+extern int32_t kp_act_locate(void);
 
 /** Result code of a movement attempt */
 enum kp_act_move_rc {
@@ -188,16 +112,12 @@ enum kp_act_move_rc {
 /**
  * Start moving the actuator.
  *
- * @param power		The power with which the actuator is moved (must be
- *			valid).
  * @param relative	True if the move is relative, false if absolute.
- * @param steps		The number of steps to move by, if "relative" is true
- * 			(positive - lower, negative - higher),
- * 			the absolute position within the power, in steps, if
- * 			"relative" is false.
+ * @param steps		The number of steps to move by, if "relative" is true.
+ * 			The absolute position, in steps, if "relative" is
+ * 			false. Positive - lower, negative - higher.
  */
-extern void kp_act_start_move(kp_act_power power,
-			      bool relative, int32_t steps);
+extern void kp_act_start_move(bool relative, int32_t steps);
 
 /**
  * Finish moving the actuator.
@@ -219,102 +139,87 @@ extern void kp_act_finish_move_event_init(struct k_poll_event *event);
 /**
  * Move the actuator.
  *
- * @param power		The power with which the actuator is moved (must be
- *			valid).
  * @param relative	True if the move is relative, false if absolute.
- * @param steps		The number of steps to move by, if "relative" is true
- * 			(positive - lower, negative - higher),
- * 			the absolute position within the power, in steps, if
- * 			"relative" is false.
+ * @param steps		The number of steps to move by, if "relative" is true.
+ * 			The absolute position, in steps, if "relative" is
+ * 			false. Positive - lower, negative - higher.
  *
  * @return The move result code.
  */
-static inline enum kp_act_move_rc kp_act_move(kp_act_power power,
-					      bool relative, int32_t steps)
+static inline enum kp_act_move_rc kp_act_move(bool relative, int32_t steps)
 {
-	assert(kp_act_power_is_valid(power));
 	assert(kp_act_is_initialized());
-	kp_act_start_move(power, relative, steps);
+	kp_act_start_move(relative, steps);
 	return kp_act_finish_move(K_FOREVER);
 }
 
 /**
- * Move the actuator to a powered absolute position.
+ * Move the actuator to an absolute position.
  * Waits for the previous move to be finished/aborted.
  *
- * @param pos	The powered absolute position to move the actuator to (must be
- *		valid).
+ * @param pos	The absolute position to move the actuator to (must be valid).
  *
  * @return The movement result.
  */
 static inline enum kp_act_move_rc
-kp_act_move_to(kp_act_pos pos)
+kp_act_move_to(int32_t pos)
 {
 	assert(kp_act_pos_is_valid(pos));
 	assert(kp_act_is_initialized());
-	return kp_act_move(kp_act_pos_get_power(pos),
-			   false, kp_act_pos_get_steps(pos));
+	return kp_act_move(false, pos);
 }
 
 /**
- * Start moving the actuator to a powered absolute position.
+ * Start moving the actuator to an absolute position.
  * Waits for the previous move to be finished/aborted.
  *
- * @param pos	The powered absolute position to move the actuator to (must be
- *		valid).
+ * @param pos	The absolute position to move the actuator to (must be valid).
  */
 static inline void
-kp_act_start_move_to(kp_act_pos pos)
+kp_act_start_move_to(int32_t pos)
 {
 	assert(kp_act_pos_is_valid(pos));
 	assert(kp_act_is_initialized());
-	kp_act_start_move(kp_act_pos_get_power(pos),
-			  false, kp_act_pos_get_steps(pos));
+	kp_act_start_move(false, pos);
 }
 
 /**
  * Move the actuator by a specified number of steps.
  *
- * @param power	The power with which to move the actuator (must be valid).
  * @param steps	The number of steps to move by: positive values
  * 		- lower, negative - higher.
  *
  * @return The movement result.
  */
 static inline enum kp_act_move_rc
-kp_act_move_by(kp_act_power power, int32_t steps)
+kp_act_move_by(int32_t steps)
 {
-	assert(kp_act_power_is_valid(power));
 	assert(kp_act_is_initialized());
-	return kp_act_move(power, true, steps);
+	return kp_act_move(true, steps);
 }
 
 /**
  * Start moving the actuator by a specified number of steps.
  *
- * @param power	The power with which to move the actuator (must be valid).
  * @param steps	The number of steps to move by: positive values
  * 		- lower, negative - higher.
  *
  * @return The movement result.
  */
 static inline void
-kp_act_start_move_by(kp_act_power power, int32_t steps)
+kp_act_start_move_by(int32_t steps)
 {
-	assert(kp_act_power_is_valid(power));
 	assert(kp_act_is_initialized());
-	kp_act_start_move(power, true, steps);
+	kp_act_start_move(true, steps);
 }
 
 /**
  * Abort the actuator's movement in progress, if any.
  *
- * @param power	The power with which the actuator is moved.
- *
  * @return True if there was no movement or it was aborted,
- * 	   false if actuator was not powered.
+ * 	   false if the actuator was not powered.
  */
-extern bool kp_act_abort(kp_act_power power);
+extern bool kp_act_abort(void);
 
 #ifdef __cplusplus
 }

@@ -38,14 +38,8 @@ static K_MUTEX_DEFINE(kp_act_mutex);
 	     _i == 0; \
 	     _i = (k_mutex_unlock(&kp_act_mutex), 1))
 
-/** Last power */
-static kp_act_power kp_act_power_last;
-
-/** Current power */
-static kp_act_power kp_act_power_curr;
-
 /** The current actuator position, in steps */
-static int32_t kp_act_pos_steps;
+static volatile int32_t kp_act_pos;
 
 /** True if a move has to be aborted, false otherwise */
 static volatile bool kp_act_move_aborted;
@@ -61,7 +55,7 @@ static K_SEM_DEFINE(kp_act_move_available, 1, 1);
 static K_SEM_DEFINE(kp_act_move_begin, 0, 1);
 
 /** The move target position, in steps */
-static int32_t kp_act_target_steps;
+static int32_t kp_act_target;
 
 /** The semaphore signaling a movement is done */
 static K_SEM_DEFINE(kp_act_move_done, 0, 1);
@@ -73,66 +67,78 @@ static volatile enum kp_act_move_rc kp_act_move_rc;
  * End of state
  */
 
-kp_act_power
-kp_act_on(void)
+/**
+ * Check if the actuator power is off, assuming the state mutex is held.
+ *
+ * @return True if the power is off, false if on.
+ */
+static inline bool
+kp_act_is_off_locked(void)
 {
-	/*
-	 * If the power is off, we should always be able to turn it on.
-	 */
-	kp_act_power power = KP_ACT_POWER_INVALID;
-	assert(kp_act_is_initialized());
-	KP_ACT_WITH_MUTEX {
-		if (kp_act_power_is_on(kp_act_power_curr)) {
-			continue;
-		}
-		gpio_pin_set(kp_act_gpio, kp_act_gpio_pin_disable, 0);
-		if (kp_act_power_last >= KP_ACT_POWER_ON_MAX) {
-			power = KP_ACT_POWER_ON_MIN;
-		} else {
-			power = kp_act_power_last + 1;
-		}
-		kp_act_power_curr = power;
-	}
-	return power;
+	return gpio_pin_get(kp_act_gpio, kp_act_gpio_pin_disable);
+}
+
+/**
+ * Check if the actuator power is on, assuming the state mutex is held.
+ *
+ * @return True if the power is on, false if off.
+ */
+static inline bool
+kp_act_is_on_locked(void)
+{
+	return !kp_act_is_off_locked();
 }
 
 bool
-kp_act_off(kp_act_power power)
+kp_act_is_off(void)
 {
-	/*
-	 * If the correct power-on is supplied, we should always be able to
-	 * turn off the power, regardless whether we're moving or not.
-	 * If we're moving, the move aborts with KP_ACT_MOVE_RC_OFF.
-	 */
-	bool turned_off = false;
-	assert(kp_act_power_is_valid(power));
+	bool is_off;
 	assert(kp_act_is_initialized());
-	if (kp_act_power_is_on(power)) {
-		KP_ACT_WITH_MUTEX {
-			if (power != kp_act_power_curr) {
-				continue;
-			}
+	KP_ACT_WITH_MUTEX {
+		is_off = kp_act_is_off_locked();
+	}
+	return is_off;
+}
+
+bool
+kp_act_on(void)
+{
+	bool turned_on = false;
+	assert(kp_act_is_initialized());
+	KP_ACT_WITH_MUTEX {
+		if (kp_act_is_off_locked()) {
+			gpio_pin_set(kp_act_gpio, kp_act_gpio_pin_disable, 0);
+			turned_on = true;
+		}
+	}
+	return turned_on;
+}
+
+bool
+kp_act_off(void)
+{
+	bool turned_off = false;
+	assert(kp_act_is_initialized());
+	KP_ACT_WITH_MUTEX {
+		/* If we're moving, the move aborts with KP_ACT_MOVE_RC_OFF */
+		if (kp_act_is_on_locked()) {
 			gpio_pin_set(kp_act_gpio, kp_act_gpio_pin_disable, 1);
-			kp_act_power_last = kp_act_power_curr;
-			kp_act_power_curr = KP_ACT_POWER_OFF;
-			kp_act_pos_steps = 0;
+			kp_act_pos = 0;
 			turned_off = true;
 		}
 	}
 	return turned_off;
 }
 
-kp_act_pos
+int32_t
 kp_act_locate(void)
 {
-	kp_act_pos pos;
+	int32_t pos;
 	assert(kp_act_is_initialized());
-	/*
-	 * We should always be able to return the location, regardless of the
-	 * power status, but location would be invalid if the power is off.
-	 */
 	KP_ACT_WITH_MUTEX {
-		pos = kp_act_pos_create(kp_act_power_curr, kp_act_pos_steps);
+		pos = kp_act_is_on_locked()
+			? kp_act_pos
+			: KP_ACT_POS_INVALID;
 	}
 	return pos;
 }
@@ -168,7 +174,7 @@ kp_act_move_thread_fn(void *arg1, void *arg2, void *arg3)
 			/* Control */
 			KP_ACT_MOVE_TIMER_SYNC(stop);
 			KP_ACT_WITH_MUTEX {
-				if (!kp_act_power_is_on(kp_act_power_curr)) {
+				if (kp_act_is_off_locked()) {
 					kp_act_move_rc = KP_ACT_MOVE_RC_OFF;
 					k_timer_stop(&kp_act_move_timer);
 					continue;
@@ -178,13 +184,13 @@ kp_act_move_thread_fn(void *arg1, void *arg2, void *arg3)
 					k_timer_stop(&kp_act_move_timer);
 					continue;
 				}
-				if (kp_act_target_steps == kp_act_pos_steps) {
+				if (kp_act_target == kp_act_pos) {
 					kp_act_move_rc = KP_ACT_MOVE_RC_OK;
 					k_timer_stop(&kp_act_move_timer);
 					continue;
 				}
 				gpio_pin_set(kp_act_gpio, kp_act_gpio_pin_dir,
-					     kp_act_pos_steps > kp_act_target_steps);
+					     kp_act_pos > kp_act_target);
 			}
 			/* Raise */
 			KP_ACT_MOVE_TIMER_SYNC(stop);
@@ -192,10 +198,10 @@ kp_act_move_thread_fn(void *arg1, void *arg2, void *arg3)
 			/* Hold */
 			KP_ACT_MOVE_TIMER_SYNC(stop);
 			KP_ACT_WITH_MUTEX {
-				if (kp_act_pos_steps < kp_act_target_steps) {
-					kp_act_pos_steps++;
+				if (kp_act_pos < kp_act_target) {
+					kp_act_pos++;
 				} else {
-					kp_act_pos_steps--;
+					kp_act_pos--;
 				}
 			}
 			/* Fall */
@@ -215,10 +221,10 @@ K_THREAD_DEFINE(kp_act_move_thread, 512,
 		-1, 0, -1);
 
 void
-kp_act_start_move(kp_act_power power, bool relative, int32_t steps)
+kp_act_start_move(bool relative, int32_t steps)
 {
 	bool started = false;
-	assert(kp_act_power_is_valid(power));
+	assert(relative || kp_act_pos_is_valid(steps));
 	assert(kp_act_is_initialized());
 
 	/* Wait for a move to be available */
@@ -227,16 +233,15 @@ kp_act_start_move(kp_act_power power, bool relative, int32_t steps)
 	/* Start the timer */
 	KP_ACT_WITH_MUTEX {
 		/* If we have the power off */
-		if (!kp_act_power_is_on(power) ||
-		    power != kp_act_power_curr) {
+		if (kp_act_is_off_locked()) {
 			kp_act_move_rc = KP_ACT_MOVE_RC_OFF;
 			continue;
 		}
 		/* Calculate target steps */
-		kp_act_target_steps =
-			relative ? kp_act_pos_steps + steps : steps;
+		kp_act_target =
+			relative ? kp_act_pos + steps : steps;
 		/* If we don't have to move */
-		if (kp_act_target_steps == kp_act_pos_steps) {
+		if (kp_act_target == kp_act_pos) {
 			kp_act_move_rc = KP_ACT_MOVE_RC_OK;
 			continue;
 		}
@@ -286,14 +291,12 @@ kp_act_finish_move(k_timeout_t timeout)
 }
 
 bool
-kp_act_abort(kp_act_power power)
+kp_act_abort(void)
 {
 	bool aborted = false;
-	assert(kp_act_power_is_valid(power));
 	assert(kp_act_is_initialized());
 	KP_ACT_WITH_MUTEX {
-		if (!kp_act_power_is_on(power) ||
-		    power != kp_act_power_curr) {
+		if (kp_act_is_off_locked()) {
 			continue;
 		}
 		kp_act_move_aborted = true;
@@ -319,12 +322,10 @@ kp_act_init(const struct device *gpio,
 	assert(!kp_act_is_initialized());
 
 	/* Move state */
-	kp_act_target_steps = 0;
+	kp_act_target = 0;
 
 	/* General state */
-	kp_act_power_last = KP_ACT_POWER_OFF;
-	kp_act_power_curr = KP_ACT_POWER_OFF;
-	kp_act_pos_steps = 0;
+	kp_act_pos = 0;
 	kp_act_move_aborted = false;
 
 	/* Init state */
