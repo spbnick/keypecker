@@ -72,7 +72,8 @@ kp_cap_isr(void *arg)
 				kp_cap_ch_ccif_mask ||
 		    kp_cap_timer->SR & TIM_SR_UIF) {
 			/* Disable the trigger */
-			LL_TIM_SetSlaveMode(kp_cap_timer, LL_TIM_SLAVEMODE_DISABLED);
+			LL_TIM_SetSlaveMode(kp_cap_timer,
+						LL_TIM_SLAVEMODE_DISABLED);
 			/* Stop the timer */
 			LL_TIM_DisableCounter(kp_cap_timer);
 			/* Disable all the interrupts */
@@ -125,13 +126,15 @@ kp_cap_start(const struct kp_cap_ch_conf *ch_conf_list,
 		if (i < ch_conf_num && ch_conf_list[i].capture) {
 			/* Configure and enable the capture */
 			kp_cap_ch_ccif_mask |= kp_cap_ch_ccif_mask_list[i];
-			LL_TIM_IC_Config(kp_cap_timer, ch_mask,
-					 LL_TIM_ACTIVEINPUT_DIRECTTI |
-					 LL_TIM_ICPSC_DIV1 |
-					 LL_TIM_IC_FILTER_FDIV1 |
-					 (ch_conf_list[i].rising
-					 	? LL_TIM_IC_POLARITY_RISING
-						: LL_TIM_IC_POLARITY_FALLING));
+			LL_TIM_IC_Config(
+				kp_cap_timer, ch_mask,
+				LL_TIM_ACTIVEINPUT_DIRECTTI |
+				LL_TIM_ICPSC_DIV1 |
+				LL_TIM_IC_FILTER_FDIV1 |
+				(ch_conf_list[i].rising
+					? LL_TIM_IC_POLARITY_RISING
+					: LL_TIM_IC_POLARITY_FALLING)
+			);
 			LL_TIM_CC_EnableChannel(kp_cap_timer, ch_mask);
 		} else {
 			/* Disable the capture */
