@@ -674,12 +674,34 @@ SHELL_CMD_REGISTER(get, &get_subcmds,
 static int
 kp_cmd_measure(const struct shell *shell, size_t argc, char **argv)
 {
-	enum kp_cap_rc rc;
+	/* Poll event indices */
+	enum {
+		EVENT_IDX_INPUT = 0,
+		EVENT_IDX_ACT_FINISH_MOVE,
+		EVENT_IDX_CAP_FINISH,
+		EVENT_NUM
+	};
+	struct k_poll_event events[EVENT_NUM];
+	enum kp_act_move_rc move_rc = KP_ACT_MOVE_RC_OK;
+	enum kp_cap_rc cap_rc = KP_CAP_RC_OK;
 	struct kp_cap_ch_res ch_res_list[ARRAY_SIZE(kp_cap_ch_conf_list)];
+	int32_t start_pos;
+	bool moved = false;
+	bool captured = false;
+	enum kp_input_msg msg;
 
 	/* Check for power */
 	if (kp_act_is_off()) {
 		shell_error(shell, "Actuator is off, aborting");
+		return 1;
+	}
+	/* Check for parameters */
+	if (!kp_act_pos_is_valid(kp_act_pos_top)) {
+		shell_error(shell, "Top position not set, aborting");
+		return 1;
+	}
+	if (!kp_act_pos_is_valid(kp_act_pos_bottom)) {
+		shell_error(shell, "Bottom position not set, aborting");
 		return 1;
 	}
 
@@ -687,44 +709,100 @@ kp_cmd_measure(const struct shell *shell, size_t argc, char **argv)
 	KP_SHELL_YIELD(kp_cmd_measure, kp_input_bypass_cb);
 	kp_input_reset();
 
-	/* Capture */
+	/* Remember the start position */
+	start_pos = kp_act_locate();
+
+	/* Move to the top */
+	move_rc = kp_act_move_to(kp_act_pos_top, kp_act_speed);
+	if (move_rc != KP_ACT_MOVE_RC_OK) {
+		goto finish;
+	}
+
+	/* Initialize events */
+	kp_input_get_event_init(&events[EVENT_IDX_INPUT]);
+	kp_act_finish_move_event_init(&events[EVENT_IDX_ACT_FINISH_MOVE]);
+	kp_cap_finish_event_init(&events[EVENT_IDX_CAP_FINISH]);
+
+	/* Start the capture */
 	kp_cap_start(kp_cap_ch_conf_list, ARRAY_SIZE(kp_cap_ch_conf_list),
 			kp_cap_timeout_us, kp_cap_bounce_us);
-	rc = kp_cap_finish(ch_res_list, ARRAY_SIZE(ch_res_list), K_FOREVER);
+	/* Start moving towards the bottom */
+	kp_act_start_move_to(kp_act_pos_bottom, kp_act_speed);
 
-	/* Output results */
-	if (rc == KP_CAP_RC_OK) {
-		for (size_t i = 0; i < ARRAY_SIZE(ch_res_list); i++) {
-			struct kp_cap_ch_conf *ch_conf =
-				&kp_cap_ch_conf_list[i];
-			struct kp_cap_ch_res *ch_res = &ch_res_list[i];
-			const char *status_str =
-				kp_cap_ch_status_to_str(ch_res->status);
-			switch (ch_res->status) {
-			case KP_CAP_CH_STATUS_DISABLED:
-				break;
-			case KP_CAP_CH_STATUS_OK:
-			case KP_CAP_CH_STATUS_OVERCAPTURE:
-				shell_print(
-					shell, "#%zu: %-15s %-11s %7u us",
-					i, ch_conf->name, status_str,
-					ch_res->value_us
-				);
-				break;
-			default:
-				shell_print(
-					shell, "#%zu: %-15s %-11s",
-					i, ch_conf->name, status_str
-				);
-				break;
+	while (!(moved && captured)) {
+		while (k_poll(events, ARRAY_SIZE(events), K_FOREVER) != 0);
+
+		if (events[EVENT_IDX_INPUT].state) {
+			while (kp_input_get(&msg, K_FOREVER) != 0);
+			if (msg == KP_INPUT_MSG_ABORT) {
+				kp_act_abort();
+				kp_cap_abort();
 			}
 		}
+
+		if (events[EVENT_IDX_ACT_FINISH_MOVE].state) {
+			move_rc = kp_act_finish_move(K_FOREVER);
+			moved = true;
+		}
+
+		if (events[EVENT_IDX_CAP_FINISH].state) {
+			cap_rc = kp_cap_finish(
+				ch_res_list, ARRAY_SIZE(ch_res_list),
+				K_FOREVER
+			);
+			captured = true;
+		}
+
+		/* Reset event state */
+		for (size_t i = 0; i < ARRAY_SIZE(events); i++) {
+			events[i].state = K_POLL_STATE_NOT_READY;
+		}
 	}
-	shell_print(shell, "%s",
-		    rc == KP_CAP_RC_TIMEOUT ? "TIMEOUT" :
-		    (rc == KP_CAP_RC_ABORTED ? "ABORTED" :
-		     (rc == KP_CAP_RC_OK ? "OK" : "UNKNOWN")));
-	return rc == KP_CAP_RC_OK;
+
+finish:
+
+	if (move_rc == KP_ACT_MOVE_RC_OFF) {
+		shell_error(shell, "Actuator is off, aborted");
+	} else if (cap_rc == KP_CAP_RC_ABORTED ||
+			move_rc == KP_ACT_MOVE_RC_ABORTED) {
+		shell_error(shell, "Aborted");
+	}
+
+	if (move_rc != KP_ACT_MOVE_RC_OK || cap_rc != KP_CAP_RC_OK) {
+		return 1;
+	}
+
+	/* Output results */
+	for (size_t i = 0; i < ARRAY_SIZE(ch_res_list); i++) {
+		struct kp_cap_ch_conf *ch_conf =
+			&kp_cap_ch_conf_list[i];
+		struct kp_cap_ch_res *ch_res = &ch_res_list[i];
+		const char *status_str =
+			kp_cap_ch_status_to_str(ch_res->status);
+		switch (ch_res->status) {
+		case KP_CAP_CH_STATUS_DISABLED:
+			break;
+		case KP_CAP_CH_STATUS_OK:
+		case KP_CAP_CH_STATUS_OVERCAPTURE:
+			shell_print(
+				shell, "#%zu: %-15s %-11s %7u us",
+				i, ch_conf->name, status_str,
+				ch_res->value_us
+			);
+			break;
+		default:
+			shell_print(
+				shell, "#%zu: %-15s %-11s",
+				i, ch_conf->name, status_str
+			);
+			break;
+		}
+	}
+
+	/* Return to the start position */
+	move_rc = kp_act_move_to(start_pos, kp_act_speed);
+
+	return move_rc != KP_ACT_MOVE_RC_OK;
 }
 
 SHELL_CMD_ARG_REGISTER(measure, NULL,
