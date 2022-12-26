@@ -45,6 +45,12 @@ static K_SEM_DEFINE(kp_cap_available, 1, 1);
 /** The capture interrupt mask for all channels to be captured */
 static uint32_t kp_cap_ch_ccif_mask;
 
+/** The maximum number of ticks to await capture of all channels */
+static uint32_t kp_cap_timeout_ticks;
+
+/** The minimum number of ticks to wait for a channel to bounce */
+static uint32_t kp_cap_bounce_ticks;
+
 /** The capture abort flag */
 static volatile bool kp_cap_aborted;
 
@@ -67,10 +73,8 @@ kp_cap_isr(void *arg)
 
 	/* If the capture is not aborted */
 	if (!kp_cap_aborted) {
-		/* If the capture either completed or timed out */
-		if ((kp_cap_timer->SR & kp_cap_ch_ccif_mask) ==
-				kp_cap_ch_ccif_mask ||
-		    kp_cap_timer->SR & TIM_SR_UIF) {
+		/* If both the capture and bounce times have expired */
+		if (kp_cap_timer->SR & TIM_SR_UIF) {
 			/* Disable the trigger */
 			LL_TIM_SetSlaveMode(kp_cap_timer,
 						LL_TIM_SLAVEMODE_DISABLED);
@@ -81,12 +85,24 @@ kp_cap_isr(void *arg)
 			/* Prepare to signal the capture is done */
 			done = true;
 		} else {
-			/* Disable the interrupts triggered so far */
-			/* NOTE: Assuming SR bits match DIER bits */
-			kp_cap_timer->DIER &= ~(
-				kp_cap_timer->SR &
-				(kp_cap_ch_ccif_mask | TIM_SR_UIF)
-			);
+			uint32_t ccif_mask = kp_cap_timer->SR &
+						kp_cap_ch_ccif_mask;
+			/* If all channels were captured (but may bounce) */
+			if (ccif_mask == kp_cap_ch_ccif_mask) {
+				/* Shorten the capture, if possible */
+				LL_TIM_DisableCounter(kp_cap_timer);
+				if ((uint32_t)kp_cap_timer->CNT <
+						kp_cap_timeout_ticks) {
+					LL_TIM_SetAutoReload(
+						kp_cap_timer,
+						kp_cap_timer->CNT +
+						kp_cap_bounce_ticks
+					);
+				}
+				LL_TIM_EnableCounter(kp_cap_timer);
+			}
+			/* Disable the interrupts we've processed */
+			kp_cap_timer->DIER &= ~ccif_mask;
 		}
 	}
 
@@ -100,7 +116,8 @@ kp_cap_isr(void *arg)
 
 void
 kp_cap_start(const struct kp_cap_ch_conf *ch_conf_list,
-		size_t ch_conf_num, uint32_t timeout_us)
+		size_t ch_conf_num, uint32_t timeout_us,
+		uint32_t bounce_us)
 {
 	size_t i;
 	uint32_t ch_mask;
@@ -108,7 +125,7 @@ kp_cap_start(const struct kp_cap_ch_conf *ch_conf_list,
 
 	assert(kp_cap_is_initialized());
 	assert(ch_conf_list != NULL || ch_conf_num == 0);
-	assert(timeout_us <= KP_CAP_TIMEOUT_MAX_US);
+	assert(timeout_us + bounce_us <= KP_CAP_TIME_MAX_US);
 
 	/* Wait for the capture to be available */
 	k_sem_take(&kp_cap_available, K_FOREVER);
@@ -152,8 +169,15 @@ kp_cap_start(const struct kp_cap_ch_conf *ch_conf_list,
 	/* NOTE: Assuming SR bits match DIER bits */
 	kp_cap_timer->DIER = kp_cap_ch_ccif_mask | TIM_SR_UIF;
 
-	/* Set auto-reload register to the specified timeout */
-	LL_TIM_SetAutoReload(kp_cap_timer, timeout_us / KP_CAP_RES_US);
+	/* Remember the number of ticks to wait for capture */
+	kp_cap_timeout_ticks = timeout_us / KP_CAP_RES_US;
+
+	/* Remember the number of ticks to wait for a channel to bounce */
+	kp_cap_bounce_ticks = bounce_us / KP_CAP_RES_US;
+
+	/* Set auto-reload register to the total timeout */
+	LL_TIM_SetAutoReload(kp_cap_timer,
+				kp_cap_timeout_ticks + kp_cap_bounce_ticks);
 
 	/* Setup the trigger to start (but not stop) counting */
 	LL_TIM_SetSlaveMode(kp_cap_timer, LL_TIM_SLAVEMODE_TRIGGER);
@@ -215,6 +239,7 @@ kp_cap_finish(struct kp_cap_ch_res *ch_res_list,
 {
 	size_t i;
 	enum kp_cap_ch_status status;
+	uint32_t value_ticks;
 	uint32_t value_us;
 
 	assert(kp_cap_is_initialized());
@@ -243,16 +268,21 @@ kp_cap_finish(struct kp_cap_ch_res *ch_res_list,
 
 		/* If the channel was captured */
 		if (kp_cap_timer->SR & kp_cap_ch_ccif_mask_list[i]) {
-			/* Read the value (clears the capture interrupt flag) */
-			value_us = *(uint32_t *)(
+			/* Read the value (clears the capture flag) */
+			value_ticks = *(uint32_t *)(
 				(uint8_t *)kp_cap_timer +
 				kp_cap_ch_ccr_offset_list[i]
-			) * KP_CAP_RES_US;
+			);
+			value_us = value_ticks * KP_CAP_RES_US;
 			/* If the channel was over-captured */
 			if (kp_cap_timer->SR & kp_cap_ch_ccof_mask_list[i]) {
 				status = KP_CAP_CH_STATUS_OVERCAPTURE;
 				/* Reset the overcapture flag */
-				kp_cap_timer->SR &= ~kp_cap_ch_ccof_mask_list[i];
+				kp_cap_timer->SR &=
+					~kp_cap_ch_ccof_mask_list[i];
+			/* Else, if the channel was captured late */
+			} else if (value_ticks > kp_cap_timeout_ticks) {
+				status = KP_CAP_CH_STATUS_TIMEOUT;
 			} else {
 				status = KP_CAP_CH_STATUS_OK;
 			}

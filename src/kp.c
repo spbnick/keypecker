@@ -349,6 +349,12 @@ kp_cmd_set_bottom(const struct shell *shell, size_t argc, char **argv)
 /** Capture channel configurations */
 static struct kp_cap_ch_conf kp_cap_ch_conf_list[KP_CAP_CH_NUM];
 
+/** Capture timeout, us */
+static uint32_t kp_cap_timeout_us = 1000000;
+
+/** Bounce time, us */
+static uint32_t kp_cap_bounce_us = 50000;
+
 static inline int
 kp_strcasecmp(const char *a, const char *b)
 {
@@ -440,6 +446,56 @@ kp_cmd_set_ch(const struct shell *shell, size_t argc, char **argv)
 	return 0;
 }
 
+/** Execute the "set timeout <us>" command */
+static int
+kp_cmd_set_timeout(const struct shell *shell, size_t argc, char **argv)
+{
+	long timeout_us;
+
+	assert(argc == 2);
+
+	if (!kp_parse_non_negative_number(argv[1], &timeout_us)) {
+		shell_error(shell, "Invalid timeout: %s", argv[1]);
+		return 1;
+	}
+	if ((uint32_t)timeout_us + kp_cap_bounce_us >= KP_CAP_TIME_MAX_US) {
+		shell_error(
+			shell,
+			"Timeout plus bounce time exceed "
+			"maximum capture time: %ld + %u >= %u",
+			timeout_us, kp_cap_bounce_us, KP_CAP_TIME_MAX_US
+		);
+		return 1;
+	};
+	kp_cap_timeout_us = (uint32_t)timeout_us;
+	return 0;
+}
+
+/** Execute the "set bounce <us>" command */
+static int
+kp_cmd_set_bounce(const struct shell *shell, size_t argc, char **argv)
+{
+	long bounce_us;
+
+	assert(argc == 2);
+
+	if (!kp_parse_non_negative_number(argv[1], &bounce_us)) {
+		shell_error(shell, "Invalid bounce time: %s", argv[1]);
+		return 1;
+	}
+	if ((uint32_t)kp_cap_timeout_us + bounce_us >= KP_CAP_TIME_MAX_US) {
+		shell_error(
+			shell,
+			"Bounce time plus timeout exceed "
+			"maximum capture time: %ld + %u >= %u",
+			bounce_us, kp_cap_timeout_us, KP_CAP_TIME_MAX_US
+		);
+		return 1;
+	};
+	kp_cap_bounce_us = (uint32_t)bounce_us;
+	return 0;
+}
+
 SHELL_STATIC_SUBCMD_SET_CREATE(set_subcmds,
 	SHELL_CMD(top, NULL, "Register current position as the top",
 			kp_cmd_set_top),
@@ -449,6 +505,12 @@ SHELL_STATIC_SUBCMD_SET_CREATE(set_subcmds,
 			"Set channel configuration: "
 			"<idx> on/off [rising/falling [<name>]]",
 			kp_cmd_set_ch, 3, 2),
+	SHELL_CMD_ARG(timeout, NULL,
+			"Set capture timeout: <us>",
+			kp_cmd_set_timeout, 2, 0),
+	SHELL_CMD_ARG(bounce, NULL,
+			"Set bounce time: <us>",
+			kp_cmd_set_bounce, 2, 0),
 	SHELL_SUBCMD_SET_END
 );
 
@@ -527,6 +589,26 @@ kp_cmd_get_ch(const struct shell *shell, size_t argc, char **argv)
 	return 0;
 }
 
+/** Execute the "get timeout" command */
+static int
+kp_cmd_get_timeout(const struct shell *shell, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+	shell_print(shell, "%u us", kp_cap_timeout_us);
+	return 0;
+}
+
+/** Execute the "get bounce" command */
+static int
+kp_cmd_get_bounce(const struct shell *shell, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+	shell_print(shell, "%u us", kp_cap_bounce_us);
+	return 0;
+}
+
 SHELL_STATIC_SUBCMD_SET_CREATE(get_subcmds,
 	SHELL_CMD(top, NULL, "Restore the top position",
 			kp_cmd_get_top),
@@ -536,6 +618,12 @@ SHELL_STATIC_SUBCMD_SET_CREATE(get_subcmds,
 			"Get channel configuration: "
 			"<idx> -> on/off rising/falling <name>",
 			kp_cmd_get_ch, 2, 0),
+	SHELL_CMD(timeout, NULL,
+			"Get capture timeout, us",
+			kp_cmd_get_timeout),
+	SHELL_CMD(bounce, NULL,
+			"Get bounce time, us",
+			kp_cmd_get_bounce),
 	SHELL_SUBCMD_SET_END
 );
 
@@ -561,7 +649,7 @@ kp_cmd_measure(const struct shell *shell, size_t argc, char **argv)
 
 	/* Capture */
 	kp_cap_start(kp_cap_ch_conf_list, ARRAY_SIZE(kp_cap_ch_conf_list),
-			1000000);
+			kp_cap_timeout_us, kp_cap_bounce_us);
 	rc = kp_cap_finish(ch_res_list, ARRAY_SIZE(ch_res_list), K_FOREVER);
 
 	/* Output results */

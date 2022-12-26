@@ -23,8 +23,8 @@ extern "C" {
 /** Timer resolution, microseconds */
 #define KP_CAP_RES_US	20
 
-/** Maximum time capture of all selected channels can be awaited for, us */
-#define KP_CAP_TIMEOUT_MAX_US	((uint32_t)KP_CAP_RES_US * UINT16_MAX)
+/** Maximum time capture of all selected channels can take, us */
+#define KP_CAP_TIME_MAX_US	((uint32_t)KP_CAP_RES_US * UINT16_MAX)
 
 /** Number of available capture channels */
 #define KP_CAP_CH_NUM	2
@@ -124,10 +124,14 @@ extern bool kp_cap_is_initialized(void);
  * 			ignored.
  * @param timeout_us	The maximum time to wait for all channels to be
  * 			captured, microseconds. Must not be greater than
- * 			KP_CAP_TIMEOUT_MAX_US.
+ * 			KP_CAP_TIME_MAX_US - bounce_us.
+ * @param bounce_us	The minimum time to wait for a channel to bounce,
+ *			microseconds. Must not be greater than
+ * 			KP_CAP_TIME_MAX_US - timeout_us.
  */
 extern void kp_cap_start(const struct kp_cap_ch_conf *ch_conf_list,
-			 size_t ch_conf_num, uint32_t timeout_us);
+			 size_t ch_conf_num, uint32_t timeout_us,
+			 uint32_t bounce_us);
 
 
 /**

@@ -337,3 +337,43 @@ So, maybe we better get rid of the tracked power on altogether.
 
 TODO: Rename kp_pos_* to kp_act_pos_*
 	- done
+TODO: Initialize GPIO pins outside module initializations
+---
+So, we need to support a bounce period for capture. It should be separate for
+each channel, and should start immediately after the channel is captured.
+
+We should wait for at least the specified period before concluding the
+capture, but we can wait for longer, if we're waiting for other channels.
+
+The maximum time we can wait for a channel capture should therefore be the
+maximum timer period minus the bounce period.
+
+It seems we need to have a "finish" timer that is started once the last
+channel is captured. Should we adjust the auto-reload register then, to point
+to the time we need to stop?
+
+We can take the largest captured value across all channels, add the bounce
+time to that, and write it to the ARR register.
+---
+We don't have to maintain the exact minimum bounce time and could take a
+little longer. Therefore, we could take our time setting up the timer for
+measuring the bounce period.
+
+Once we got all the channels captured, we could stop the timer momentarily,
+and shorten the ARR to the current time plus the bounce period, provided that
+doesn't exceed the maximum capture time.
+
+Wait, that doesn't let us finish the capture early, right after the timeout,
+in case there was nothing captured.
+
+What if we set ARR to the timeout initially, then when the first update
+interrupt comes, we shorten the ARR to the bounce time, and on the second
+update interrupt we finish.
+
+Eh, maybe let's just keep it this way for now. Timeout of all channels is an
+unlikely event, and the bounce time is usually short.
+
+TODO: Use a signal generator to verify bouncing under timer resolution is
+      captured.
+TODO: Use a signal generator to verify bounce-time signals are
+      considered timeouts.
