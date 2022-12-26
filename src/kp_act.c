@@ -147,8 +147,11 @@ kp_act_locate(void)
 /** Move timer */
 static K_TIMER_DEFINE(kp_act_move_timer, NULL, NULL);
 
-/** Move timer period */
-#define KP_ACT_MOVE_TIMER_PERIOD	K_MSEC(1)
+/** Minimum move timer period, us */
+#define KP_ACT_MOVE_TIMER_PERIOD_MIN_US	400
+
+/** Maximum move timer period, us */
+#define KP_ACT_MOVE_TIMER_PERIOD_MAX_US	4000
 
 /**
  * Wait for next timer tick, or go to a label if timer is stopped.
@@ -223,10 +226,12 @@ K_THREAD_DEFINE(kp_act_move_thread, 512,
 		-1, 0, -1);
 
 void
-kp_act_start_move(bool relative, int32_t steps)
+kp_act_start_move(bool relative, int32_t steps, uint32_t speed)
 {
 	bool started = false;
+	uint32_t period_us;
 	assert(relative || kp_act_pos_is_valid(steps));
+	assert(speed <= 100);
 	assert(kp_act_is_initialized());
 
 	/* Wait for a move to be available */
@@ -248,9 +253,12 @@ kp_act_start_move(bool relative, int32_t steps)
 			continue;
 		}
 		kp_act_move_aborted = false;
+		period_us = KP_ACT_MOVE_TIMER_PERIOD_MAX_US -
+			((KP_ACT_MOVE_TIMER_PERIOD_MAX_US -
+			  KP_ACT_MOVE_TIMER_PERIOD_MIN_US) *
+			 speed) / 100;
 		k_timer_start(&kp_act_move_timer,
-				K_NO_WAIT,
-				KP_ACT_MOVE_TIMER_PERIOD);
+				K_NO_WAIT, K_USEC(period_us));
 		started = true;
 	}
 

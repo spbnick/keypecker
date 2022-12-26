@@ -37,6 +37,9 @@ static const struct device *kp_gpio = DEVICE_DT_GET(KP_GPIO_NODE);
 /* The trigger input GPIO pin */
 static const gpio_pin_t KP_GPIO_PIN_TRIGGER = 4;
 
+/** Actuator speed, 0-100% */
+static uint32_t kp_act_speed = 100;
+
 /** Top actuator position */
 static int32_t kp_act_pos_top = KP_ACT_POS_INVALID;
 
@@ -111,7 +114,7 @@ kp_cmd_up(const struct shell *shell, size_t argc, char **argv)
 	} else {
 		steps = 1;
 	}
-	rc = kp_act_move_by(-steps);
+	rc = kp_act_move_by(-steps, kp_act_speed);
 	switch (rc) {
 		case KP_ACT_MOVE_RC_OFF:
 			shell_error(shell, "Actuator is off, stopping");
@@ -143,7 +146,7 @@ kp_cmd_down(const struct shell *shell, size_t argc, char **argv)
 	} else {
 		steps = 1;
 	}
-	rc = kp_act_move_by(steps);
+	rc = kp_act_move_by(steps, kp_act_speed);
 	switch (rc) {
 		case KP_ACT_MOVE_RC_OFF:
 			shell_error(shell, "Actuator is off, stopping");
@@ -217,12 +220,12 @@ kp_cmd_swing(const struct shell *shell, size_t argc, char **argv)
 
 	/* Move */
 	shell_print(shell, "Swinging, press Enter to stop, Ctrl-C to abort");
-	rc = kp_act_move_by(steps / 2);
+	rc = kp_act_move_by(steps / 2, kp_act_speed);
 	bool finished = false;
 	while (rc == KP_ACT_MOVE_RC_OK && !finished) {
 		bool moved = false;
 		steps = -steps;
-		kp_act_start_move_by(steps);
+		kp_act_start_move_by(steps, kp_act_speed);
 		while (rc == KP_ACT_MOVE_RC_OK && !moved) {
 			while (k_poll(events, ARRAY_SIZE(events), K_FOREVER) != 0);
 
@@ -249,7 +252,7 @@ kp_cmd_swing(const struct shell *shell, size_t argc, char **argv)
 
 	if (finished && rc == KP_ACT_MOVE_RC_OK) {
 		/* Return to the start position */
-		rc = kp_act_move_to(start_pos);
+		rc = kp_act_move_to(start_pos, kp_act_speed);
 	}
 
 	/* Report error, if any */
@@ -295,7 +298,8 @@ kp_cmd_adjust(const struct shell *shell, size_t argc, char **argv)
 		while (kp_input_get(&msg, K_FOREVER) != 0);
 		if (msg == KP_INPUT_MSG_UP || msg == KP_INPUT_MSG_DOWN) {
 			rc = kp_act_move_by(
-				(msg == KP_INPUT_MSG_DOWN) ? 1 : -1
+				(msg == KP_INPUT_MSG_DOWN) ? 1 : -1,
+				kp_act_speed
 			);
 		} else if (msg == KP_INPUT_MSG_ABORT) {
 			rc = KP_ACT_MOVE_RC_ABORTED;
@@ -317,6 +321,26 @@ kp_cmd_adjust(const struct shell *shell, size_t argc, char **argv)
 
 SHELL_CMD_REGISTER(adjust, NULL, "Adjust actuator position interactively",
 			kp_cmd_adjust);
+
+/** Execute the "set speed <percentage>" command */
+static int
+kp_cmd_set_speed(const struct shell *shell, size_t argc, char **argv)
+{
+	long speed;
+
+	assert(argc == 2);
+
+	if (!kp_parse_non_negative_number(argv[1], &speed) || speed > 100) {
+		shell_error(
+			shell,
+			"Invalid speed percentage (expecting 0-100): %s",
+			argv[1]
+		);
+		return 1;
+	}
+	kp_act_speed = (uint32_t)speed;
+	return 0;
+}
 
 /** Execute the "set top" command */
 static int
@@ -497,6 +521,9 @@ kp_cmd_set_bounce(const struct shell *shell, size_t argc, char **argv)
 }
 
 SHELL_STATIC_SUBCMD_SET_CREATE(set_subcmds,
+	SHELL_CMD_ARG(speed, NULL,
+			"Set speed: <percentage>",
+			kp_cmd_set_speed, 2, 0),
 	SHELL_CMD(top, NULL, "Register current position as the top",
 			kp_cmd_set_top),
 	SHELL_CMD(bottom, NULL, "Register current position as the bottom",
@@ -517,6 +544,16 @@ SHELL_STATIC_SUBCMD_SET_CREATE(set_subcmds,
 SHELL_CMD_REGISTER(set, &set_subcmds,
 			"Set parameters", NULL);
 
+/** Execute the "get speed" command */
+static int
+kp_cmd_get_speed(const struct shell *shell, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+	shell_print(shell, "%u%%", kp_act_speed);
+	return 0;
+}
+
 /** Execute the "get top" command */
 static int
 kp_cmd_get_top(const struct shell *shell, size_t argc, char **argv)
@@ -528,7 +565,7 @@ kp_cmd_get_top(const struct shell *shell, size_t argc, char **argv)
 		shell_error(shell, "Top position not set, not moving");
 		return 1;
 	}
-	rc = kp_act_move_to(kp_act_pos_top);
+	rc = kp_act_move_to(kp_act_pos_top, kp_act_speed);
 	if (rc == KP_ACT_MOVE_RC_ABORTED) {
 		shell_error(shell, "Aborted");
 	} else if (rc == KP_ACT_MOVE_RC_OFF) {
@@ -548,7 +585,7 @@ kp_cmd_get_bottom(const struct shell *shell, size_t argc, char **argv)
 		shell_error(shell, "Bottom position not set, not moving");
 		return 1;
 	}
-	rc = kp_act_move_to(kp_act_pos_bottom);
+	rc = kp_act_move_to(kp_act_pos_bottom, kp_act_speed);
 	if (rc == KP_ACT_MOVE_RC_ABORTED) {
 		shell_error(shell, "Aborted");
 	} else if (rc == KP_ACT_MOVE_RC_OFF) {
@@ -610,6 +647,9 @@ kp_cmd_get_bounce(const struct shell *shell, size_t argc, char **argv)
 }
 
 SHELL_STATIC_SUBCMD_SET_CREATE(get_subcmds,
+	SHELL_CMD(speed, NULL,
+			"Get speed percentage",
+			kp_cmd_get_speed),
 	SHELL_CMD(top, NULL, "Restore the top position",
 			kp_cmd_get_top),
 	SHELL_CMD(bottom, NULL, "Restore the bottom position",

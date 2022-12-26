@@ -116,8 +116,9 @@ enum kp_act_move_rc {
  * @param steps		The number of steps to move by, if "relative" is true.
  * 			The absolute position, in steps, if "relative" is
  * 			false. Positive - lower, negative - higher.
+ * @param speed		The speed with which to move, 0-100%.
  */
-extern void kp_act_start_move(bool relative, int32_t steps);
+extern void kp_act_start_move(bool relative, int32_t steps, uint32_t speed);
 
 /**
  * Finish moving the actuator.
@@ -143,14 +144,18 @@ extern void kp_act_finish_move_event_init(struct k_poll_event *event);
  * @param steps		The number of steps to move by, if "relative" is true.
  * 			The absolute position, in steps, if "relative" is
  * 			false. Positive - lower, negative - higher.
+ * @param speed		The speed with which to move, 0-100%.
  *
  * @return The move result code.
  */
-static inline enum kp_act_move_rc kp_act_move(bool relative, int32_t steps)
+static inline enum kp_act_move_rc kp_act_move(bool relative,
+					      int32_t steps,
+					      uint32_t speed)
 {
 	assert(relative || kp_act_pos_is_valid(steps));
+	assert(speed <= 100);
 	assert(kp_act_is_initialized());
-	kp_act_start_move(relative, steps);
+	kp_act_start_move(relative, steps, speed);
 	return kp_act_finish_move(K_FOREVER);
 }
 
@@ -159,15 +164,17 @@ static inline enum kp_act_move_rc kp_act_move(bool relative, int32_t steps)
  * Waits for the previous move to be finished/aborted.
  *
  * @param pos	The absolute position to move the actuator to (must be valid).
+ * @param speed	The speed with which to move, 0-100%.
  *
  * @return The movement result.
  */
 static inline enum kp_act_move_rc
-kp_act_move_to(int32_t pos)
+kp_act_move_to(int32_t pos, uint32_t speed)
 {
 	assert(kp_act_pos_is_valid(pos));
+	assert(speed <= 100);
 	assert(kp_act_is_initialized());
-	return kp_act_move(false, pos);
+	return kp_act_move(false, pos, speed);
 }
 
 /**
@@ -175,13 +182,15 @@ kp_act_move_to(int32_t pos)
  * Waits for the previous move to be finished/aborted.
  *
  * @param pos	The absolute position to move the actuator to (must be valid).
+ * @param speed	The speed with which to move, 0-100%.
  */
 static inline void
-kp_act_start_move_to(int32_t pos)
+kp_act_start_move_to(int32_t pos, uint32_t speed)
 {
 	assert(kp_act_pos_is_valid(pos));
+	assert(speed <= 100);
 	assert(kp_act_is_initialized());
-	kp_act_start_move(false, pos);
+	kp_act_start_move(false, pos, speed);
 }
 
 /**
@@ -189,14 +198,16 @@ kp_act_start_move_to(int32_t pos)
  *
  * @param steps	The number of steps to move by: positive values
  * 		- lower, negative - higher.
+ * @param speed	The speed with which to move, 0-100%.
  *
  * @return The movement result.
  */
 static inline enum kp_act_move_rc
-kp_act_move_by(int32_t steps)
+kp_act_move_by(int32_t steps, uint32_t speed)
 {
+	assert(speed <= 100);
 	assert(kp_act_is_initialized());
-	return kp_act_move(true, steps);
+	return kp_act_move(true, steps, speed);
 }
 
 /**
@@ -204,14 +215,16 @@ kp_act_move_by(int32_t steps)
  *
  * @param steps	The number of steps to move by: positive values
  * 		- lower, negative - higher.
+ * @param speed	The speed with which to move, 0-100%.
  *
  * @return The movement result.
  */
 static inline void
-kp_act_start_move_by(int32_t steps)
+kp_act_start_move_by(int32_t steps, uint32_t speed)
 {
+	assert(speed <= 100);
 	assert(kp_act_is_initialized());
-	kp_act_start_move(true, steps);
+	kp_act_start_move(true, steps, speed);
 }
 
 /**
