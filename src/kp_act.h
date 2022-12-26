@@ -148,6 +148,7 @@ extern void kp_act_finish_move_event_init(struct k_poll_event *event);
  */
 static inline enum kp_act_move_rc kp_act_move(bool relative, int32_t steps)
 {
+	assert(relative || kp_act_pos_is_valid(steps));
 	assert(kp_act_is_initialized());
 	kp_act_start_move(relative, steps);
 	return kp_act_finish_move(K_FOREVER);
