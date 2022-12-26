@@ -249,7 +249,7 @@ kp_act_start_move(bool relative, int32_t steps)
 		}
 		kp_act_move_aborted = false;
 		k_timer_start(&kp_act_move_timer,
-				KP_ACT_MOVE_TIMER_PERIOD,
+				K_NO_WAIT,
 				KP_ACT_MOVE_TIMER_PERIOD);
 		started = true;
 	}
