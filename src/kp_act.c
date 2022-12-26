@@ -181,7 +181,8 @@ kp_act_move_thread_fn(void *arg1, void *arg2, void *arg3)
 					continue;
 				}
 				if (kp_act_move_aborted) {
-					kp_act_move_rc = KP_ACT_MOVE_RC_ABORTED;
+					kp_act_move_rc =
+						KP_ACT_MOVE_RC_ABORTED;
 					k_timer_stop(&kp_act_move_timer);
 					continue;
 				}
