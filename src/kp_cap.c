@@ -252,6 +252,8 @@ kp_cap_finish(struct kp_cap_ch_res *ch_res_list,
 
 	/* If the capture was aborted */
 	if (kp_cap_aborted) {
+		/* Allow another capture */
+		k_sem_give(&kp_cap_available);
 		return KP_CAP_RC_ABORTED;
 	}
 
