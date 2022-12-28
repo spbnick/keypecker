@@ -684,6 +684,265 @@ SHELL_STATIC_SUBCMD_SET_CREATE(get_subcmds,
 SHELL_CMD_REGISTER(get, &get_subcmds,
 			"Get parameters", NULL);
 
+/** Result of counting triggers in a range */
+enum kp_check_rc {
+	/* Success */
+	KP_CHECK_RC_OK,
+	/* Aborted */
+	KP_CHECK_RC_ABORTED,
+	/* Actuator is off */
+	KP_CHECK_RC_OFF,
+};
+
+/**
+ * Count the number of all-channel triggers for a number of passes over a
+ * range of actuator positions.
+ *
+ * @param top		The top position of the range.
+ * @param bottom	The bottom position of the range.
+ * @param passes	Number of actuator passes to execute.
+ * @param ptriggers	Location for the number of triggered passes.
+ * 			Can be NULL to have the number discarded.
+ *
+ * @return Result code.
+ */
+static enum kp_check_rc
+kp_check(int32_t top, int32_t bottom,
+			size_t passes, size_t *ptriggers)
+{
+	/* Poll event indices */
+	enum {
+		EVENT_IDX_INPUT = 0,
+		EVENT_IDX_ACT_FINISH_MOVE,
+		/* Keep last to allow exclusion */
+		EVENT_IDX_CAP_FINISH,
+		EVENT_NUM
+	};
+	struct k_poll_event events[EVENT_NUM];
+	struct kp_cap_ch_res ch_res_list[ARRAY_SIZE(kp_cap_ch_conf_list)];
+	enum kp_act_move_rc move_rc = KP_ACT_MOVE_RC_OK;
+	enum kp_cap_rc cap_rc = KP_CAP_RC_OK;
+	bool moved;
+	bool capturing;
+	bool captured;
+	enum kp_input_msg msg;
+	int32_t pos;
+	size_t triggers = 0;
+	size_t i;
+	size_t captured_channels;
+	size_t triggered_channels;
+
+	/* Initialize events */
+	kp_input_get_event_init(&events[EVENT_IDX_INPUT]);
+	kp_act_finish_move_event_init(&events[EVENT_IDX_ACT_FINISH_MOVE]);
+	kp_cap_finish_event_init(&events[EVENT_IDX_CAP_FINISH]);
+
+	while (passes > 0) {
+		pos = kp_act_locate();
+		if (!kp_act_pos_is_valid(pos)) {
+			return KP_CHECK_RC_OFF;
+		}
+
+		/* If we're at a boundary */
+		if (pos == top || pos == bottom) {
+			/* Start a pass */
+			passes--;
+
+			/* Start the capture */
+			kp_cap_start(kp_cap_ch_conf_list,
+					ARRAY_SIZE(kp_cap_ch_conf_list),
+					kp_cap_timeout_us, kp_cap_bounce_us);
+			capturing = true;
+
+			/* Start moving to the opposite boundary */
+			kp_act_start_move_to((pos == top) ? bottom : top,
+						kp_act_speed);
+		/* Else we're somewhere else */
+		} else {
+			/* Do not start a pass */
+
+			/* Do not start the capture */
+			capturing = false;
+
+			/* Start moving to the closest boundary */
+			kp_act_start_move_to(
+				(abs(pos - top) < abs(pos - bottom))
+					? top : bottom,
+				kp_act_speed
+			);
+		}
+
+		/* Move and capture */
+		for (moved = false, captured = false;
+				!(moved && (!capturing || captured));) {
+			while (k_poll(events,
+				      EVENT_IDX_CAP_FINISH +
+				      (capturing == true),
+				      K_FOREVER) != 0);
+
+			/* Handle input */
+			if (events[EVENT_IDX_INPUT].state) {
+				while (kp_input_get(&msg, K_FOREVER) != 0);
+				if (msg == KP_INPUT_MSG_ABORT) {
+					kp_act_abort();
+					kp_cap_abort();
+				}
+			}
+
+			/* Handle movement completion */
+			if (events[EVENT_IDX_ACT_FINISH_MOVE].state) {
+				move_rc = kp_act_finish_move(K_FOREVER);
+				moved = true;
+			}
+
+			/* Handle capture completion */
+			if (events[EVENT_IDX_CAP_FINISH].state) {
+				cap_rc = kp_cap_finish(
+					ch_res_list, ARRAY_SIZE(ch_res_list),
+					K_FOREVER
+				);
+				captured = true;
+			}
+
+			/* Reset event state */
+			for (i = 0; i < ARRAY_SIZE(events); i++) {
+				events[i].state = K_POLL_STATE_NOT_READY;
+			}
+		}
+
+		if (move_rc == KP_ACT_MOVE_RC_ABORTED ||
+				cap_rc == KP_CAP_RC_ABORTED) {
+			return KP_CHECK_RC_ABORTED;
+		}
+		if (move_rc == KP_ACT_MOVE_RC_OFF) {
+			return KP_CHECK_RC_OFF;
+		}
+		assert(move_rc == KP_ACT_MOVE_RC_OK);
+		assert(cap_rc == KP_CAP_RC_OK);
+
+		/* Check if any and all channels triggered */
+		for (i = 0, captured_channels = 0, triggered_channels = 0;
+		     capturing && i < ARRAY_SIZE(ch_res_list); i++) {
+			enum kp_cap_ch_status status = ch_res_list[i].status;
+			if (status != KP_CAP_CH_STATUS_DISABLED) {
+				captured_channels++;
+				if (status != KP_CAP_CH_STATUS_TIMEOUT) {
+					triggered_channels++;
+				}
+			}
+		}
+		if (captured_channels > 0 &&
+				triggered_channels == captured_channels) {
+			triggers++;
+		}
+	}
+
+	if (ptriggers != NULL) {
+		*ptriggers = triggers;
+	}
+
+	return KP_CHECK_RC_OK;
+}
+
+/** Execute the "check" command */
+static int
+kp_cmd_check(const struct shell *shell, size_t argc, char **argv)
+{
+	int32_t start;
+	long passes;
+	size_t triggers;
+
+	/* Check for power */
+	if (kp_act_is_off()) {
+		shell_error(shell, "Actuator is off, aborting");
+		return 1;
+	}
+	/* Check for parameters */
+	if (!kp_act_pos_is_valid(kp_act_pos_top)) {
+		shell_error(shell, "Top position not set, aborting");
+		return 1;
+	}
+	if (!kp_act_pos_is_valid(kp_act_pos_bottom)) {
+		shell_error(shell, "Bottom position not set, aborting");
+		return 1;
+	}
+
+	/* Return to the shell and restart in an input-diverted thread */
+	KP_SHELL_YIELD(kp_cmd_check, kp_input_bypass_cb);
+	kp_input_reset();
+
+	if (argc < 2) {
+		passes = 1;
+	} else {
+		if (!kp_parse_non_negative_number(argv[1], &passes) ||
+				passes == 0) {
+			shell_error(
+				shell,
+				"Invalid number of passes "
+				"(a number greater than zero expected): %s",
+				argv[1]
+			);
+			return 1;
+		}
+	}
+
+	/* Remember the start position */
+	start = kp_act_locate();
+
+	/* Count the triggers */
+	switch (kp_check(kp_act_pos_top, kp_act_pos_bottom,
+				(size_t)passes, &triggers)) {
+		case KP_CHECK_RC_OK:
+			break;
+		case KP_CHECK_RC_ABORTED:
+			shell_error(shell, "Aborted");
+			return 1;
+		case KP_CHECK_RC_OFF:
+			shell_error(shell, "Actuator is off, aborted");
+			return 1;
+		default:
+			shell_error(shell, "Unexpected error, aborted");
+			return 1;
+	}
+
+	shell_print(shell, "%zu%%", triggers * 100 / (size_t)passes);
+
+	/* Return to the start position */
+	switch (kp_act_move_to(start, kp_act_speed)) {
+		case KP_ACT_MOVE_RC_OK:
+			break;
+		case KP_ACT_MOVE_RC_ABORTED:
+			shell_warn(
+				shell,
+				"Move back to the start position "
+				"was aborted"
+			);
+			break;
+		case KP_ACT_MOVE_RC_OFF:
+			shell_warn(
+				shell,
+				"Couldn't move back to the start position - "
+				"actuator is off"
+			);
+			break;
+		default:
+			shell_error(
+				shell,
+				"Unexpected error moving back to the start "
+				"position"
+			);
+			break;
+	}
+
+	return 0;
+}
+
+SHELL_CMD_ARG_REGISTER(check, NULL,
+			"Check reliability of all-channel triggering "
+			"between the top and bottom positions, over the "
+			"specified number of passes (default is one)",
+			kp_cmd_check, 1, 1);
+
 /** Execute the "measure" command */
 static int
 kp_cmd_measure(const struct shell *shell, size_t argc, char **argv)

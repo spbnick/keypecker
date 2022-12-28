@@ -377,3 +377,63 @@ TODO: Use a signal generator to verify bouncing under timer resolution is
       captured.
 TODO: Use a signal generator to verify bounce-time signals are
       considered timeouts.
+
+---
+What are we looking for?
+The two steps: one immediately before the trigger and one at the trigger. We
+might not be able to find them, because they will be too close to the trigger
+point. Then we need to find the minimum range of steps where the trigger
+happens reliably.
+
+Perhaps we could do each transition a few times to make sure it's reliable,
+and back off, it's not.
+
+So, we could have three results for each transition: not triggering,
+triggering, triggering unreliably.
+
+We start without the assumption whether the current top-bottom range is
+reliably triggering. We test it first, and then proceed.
+
+function check_range(top, bottom, tries):
+	for i in range(0, tries):
+		move to top
+		start capture
+		move to bottom
+		finish capture
+		record result
+	return triggered/not triggered/inconclusive
+
+assert kp_act_pos_top < kp_act_pos_bottom
+top = None
+bottom = None
+middle = None
+next_top = kp_act_pos_top
+next_bottom = kp_act_pos_bottom
+
+forever:
+	triggered = check_range(next_top, next_bottom, 3)
+	if not triggered:
+		# If we tried the top half
+		if next_bottom == middle:
+			# Try the bottom half
+			next_top = middle
+			next_bottom = bottom
+			continue
+		break
+	top = next_top
+	bottom = next_bottom
+	if bottom - top <= 1:
+		break
+	middle = (top + bottom) / 2
+	# Try the top half
+	next_top = top
+	next_bottom = middle
+
+if not (top and bottom):
+	error("No reliable trigger between top and bottom, not narrowed")
+
+if top == kp_act_pos_top and bottom == kp_act_pos_bottom:
+	info("The top and bottom positions are already as close as "
+		"possible to the trigger point")
+kp_act_pos_top = top
+kp_act_pos_bottom = bottom
