@@ -346,28 +346,42 @@ kp_cmd_set_speed(const struct shell *shell, size_t argc, char **argv)
 static int
 kp_cmd_set_top(const struct shell *shell, size_t argc, char **argv)
 {
+	int32_t pos;
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
-	kp_act_pos_top = kp_act_locate();
-	if (kp_act_pos_is_valid(kp_act_pos_top)) {
-		return 0;
+	pos = kp_act_locate();
+	if (!kp_act_pos_is_valid(pos)) {
+		shell_error(shell, "Actuator is off, position not set");
+		return 1;
 	}
-	shell_error(shell, "Actuator is off, position not set");
-	return 1;
+	if (kp_act_pos_is_valid(kp_act_pos_bottom) &&
+			pos >= kp_act_pos_bottom) {
+		shell_error(shell, "Position not above bottom, not set");
+		return 1;
+	}
+	kp_act_pos_top = pos;
+	return 0;
 }
 
 /** Execute the "set bottom" command */
 static int
 kp_cmd_set_bottom(const struct shell *shell, size_t argc, char **argv)
 {
+	int32_t pos;
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
-	kp_act_pos_bottom = kp_act_locate();
-	if (kp_act_pos_is_valid(kp_act_pos_bottom)) {
-		return 0;
+	pos = kp_act_locate();
+	if (!kp_act_pos_is_valid(pos)) {
+		shell_error(shell, "Actuator is off, position not set");
+		return 1;
 	}
-	shell_error(shell, "Actuator is off, position not set");
-	return 1;
+	if (kp_act_pos_is_valid(kp_act_pos_top) &&
+			pos <= kp_act_pos_top) {
+		shell_error(shell, "Position not below top, not set");
+		return 1;
+	}
+	kp_act_pos_bottom = pos;
+	return 0;
 }
 
 /** Capture channel configurations */
