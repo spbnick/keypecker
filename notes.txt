@@ -437,3 +437,9 @@ if top == kp_act_pos_top and bottom == kp_act_pos_bottom:
 		"possible to the trigger point")
 kp_act_pos_top = top
 kp_act_pos_bottom = bottom
+
+---
+We need to handle the situation where we hit exactly the trigger point in one
+of the steps and the trigger becomes unstable. We could rectify that by moving
+further from the origin boundary. E.g. half way again to the opposite
+boundary.
