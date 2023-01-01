@@ -443,3 +443,12 @@ We need to handle the situation where we hit exactly the trigger point in one
 of the steps and the trigger becomes unstable. We could rectify that by moving
 further from the origin boundary. E.g. half way again to the opposite
 boundary.
+---
+So, we need one final push to get actual use out of the device: measuring
+timing. We need to make the "measure" command output timing of every pass
+(optional), plus the summary (mandatory), for each channel: minimum time,
+maximum time, and the average (which one, though? arithmetic mean for the
+start? maybe mode as well, rounded to ms?).
+
+TODO: Make k_poll_event_init() accept NULL object with K_POLL_TYPE_IGNORE
+TODO: Consider making K_POLL_TYPE_* into an enum for safety.

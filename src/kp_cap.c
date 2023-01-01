@@ -229,7 +229,7 @@ void
 kp_cap_finish_event_init(struct k_poll_event *event)
 {
 	assert(kp_cap_is_initialized());
-	k_poll_event_init(event, K_POLL_STATE_SEM_AVAILABLE,
+	k_poll_event_init(event, K_POLL_TYPE_SEM_AVAILABLE,
 			  K_POLL_MODE_NOTIFY_ONLY, &kp_cap_done);
 }
 

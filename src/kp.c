@@ -684,15 +684,123 @@ SHELL_STATIC_SUBCMD_SET_CREATE(get_subcmds,
 SHELL_CMD_REGISTER(get, &get_subcmds,
 			"Get parameters", NULL);
 
-/** Result of counting triggers in a range */
-enum kp_check_rc {
+/** Sampling result code */
+enum kp_sample_rc {
 	/* Success */
-	KP_CHECK_RC_OK,
+	KP_SAMPLE_RC_OK,
 	/* Aborted */
-	KP_CHECK_RC_ABORTED,
+	KP_SAMPLE_RC_ABORTED,
 	/* Actuator is off */
-	KP_CHECK_RC_OFF,
+	KP_SAMPLE_RC_OFF,
 };
+
+/**
+ * Sample captured channels for a specified movement.
+ *
+ * @param target	The absolute actuator position to move to.
+ * 			If invalid, no movement will be done.
+ * @param ch_res_list	Location for channel capture results.
+ * 			Can be NULL, if ch_num is zero.
+ * @param ch_num	Number of channels to capture (and to output into the
+ *			ch_res_list location). Will be truncated to the number
+ *			of channels in "kp_cap_ch_conf_list". If zero, no
+ *			capture will be done or waited for, nor any results
+ *			will be output.
+ *
+ * @return Result code.
+ */
+static enum kp_sample_rc
+kp_sample(int32_t target, struct kp_cap_ch_res *ch_res_list, size_t ch_num)
+{
+	/* Poll event indices */
+	enum {
+		EVENT_IDX_INPUT = 0,
+		EVENT_IDX_ACT_FINISH_MOVE,
+		EVENT_IDX_CAP_FINISH,
+		EVENT_NUM
+	};
+	struct k_poll_event events[EVENT_NUM];
+	enum kp_act_move_rc move_rc = KP_ACT_MOVE_RC_OK;
+	enum kp_cap_rc cap_rc = KP_CAP_RC_OK;
+	bool moving = kp_act_pos_is_valid(target);
+	bool capturing = ch_num > 0;
+	bool moved = false;
+	bool captured = false;
+	enum kp_input_msg msg;
+	size_t i;
+
+	assert(ch_res_list != NULL || ch_num == 0);
+
+	/* Initialize events */
+	kp_input_get_event_init(&events[EVENT_IDX_INPUT]);
+	kp_act_finish_move_event_init(&events[EVENT_IDX_ACT_FINISH_MOVE]);
+	kp_cap_finish_event_init(&events[EVENT_IDX_CAP_FINISH]);
+
+	/* Start the capture, if requested */
+	if (capturing) {
+		kp_cap_start(kp_cap_ch_conf_list,
+				ARRAY_SIZE(kp_cap_ch_conf_list),
+				kp_cap_timeout_us, kp_cap_bounce_us);
+	} else {
+		events[EVENT_IDX_CAP_FINISH].type = K_POLL_TYPE_IGNORE;
+	}
+
+	/* Start moving towards the target, if requested */
+	if (moving) {
+		kp_act_start_move_to(target, kp_act_speed);
+	} else {
+		events[EVENT_IDX_ACT_FINISH_MOVE].type = K_POLL_TYPE_IGNORE;
+	}
+
+	/* Move and capture */
+	for (; (moving && !moved) || (capturing && !captured);) {
+		while (k_poll(events, ARRAY_SIZE(events), K_FOREVER) != 0);
+
+		/* Handle input */
+		if (events[EVENT_IDX_INPUT].state) {
+			while (kp_input_get(&msg, K_FOREVER) != 0);
+			if (msg == KP_INPUT_MSG_ABORT) {
+				if (moving) {
+					kp_act_abort();
+				}
+				if (capturing) {
+					kp_cap_abort();
+				}
+			}
+		}
+
+		/* Handle movement completion */
+		if (events[EVENT_IDX_ACT_FINISH_MOVE].state) {
+			move_rc = kp_act_finish_move(K_FOREVER);
+			moved = true;
+		}
+
+		/* Handle capture completion */
+		if (events[EVENT_IDX_CAP_FINISH].state) {
+			cap_rc = kp_cap_finish(
+				ch_res_list, ch_num, K_FOREVER);
+			captured = true;
+		}
+
+		/* Reset event state */
+		for (i = 0; i < ARRAY_SIZE(events); i++) {
+			events[i].state = K_POLL_STATE_NOT_READY;
+		}
+	}
+
+	if (move_rc == KP_ACT_MOVE_RC_ABORTED ||
+			cap_rc == KP_CAP_RC_ABORTED) {
+		return KP_SAMPLE_RC_ABORTED;
+	}
+	if (move_rc == KP_ACT_MOVE_RC_OFF) {
+		return KP_SAMPLE_RC_OFF;
+	}
+	assert(move_rc == KP_ACT_MOVE_RC_OK);
+	assert(cap_rc == KP_CAP_RC_OK);
+
+
+	return KP_SAMPLE_RC_OK;
+}
 
 /**
  * Count the number of all-channel triggers for a number of passes over a
@@ -704,125 +812,51 @@ enum kp_check_rc {
  * @param ptriggers	Location for the number of triggered passes.
  * 			Can be NULL to have the number discarded.
  *
- * @return Result code.
+ * @return Sampling result code.
  */
-static enum kp_check_rc
-kp_check(int32_t top, int32_t bottom,
-			size_t passes, size_t *ptriggers)
+static enum kp_sample_rc
+kp_check(int32_t top, int32_t bottom, size_t passes, size_t *ptriggers)
 {
-	/* Poll event indices */
-	enum {
-		EVENT_IDX_INPUT = 0,
-		EVENT_IDX_ACT_FINISH_MOVE,
-		/* Keep last to allow exclusion */
-		EVENT_IDX_CAP_FINISH,
-		EVENT_NUM
-	};
-	struct k_poll_event events[EVENT_NUM];
 	struct kp_cap_ch_res ch_res_list[ARRAY_SIZE(kp_cap_ch_conf_list)];
-	enum kp_act_move_rc move_rc = KP_ACT_MOVE_RC_OK;
-	enum kp_cap_rc cap_rc = KP_CAP_RC_OK;
-	bool moved;
-	bool capturing;
-	bool captured;
-	enum kp_input_msg msg;
+	enum kp_sample_rc rc = KP_CAP_RC_OK;
 	int32_t pos;
 	size_t triggers = 0;
 	size_t i;
 	size_t captured_channels;
 	size_t triggered_channels;
 
-	/* Initialize events */
-	kp_input_get_event_init(&events[EVENT_IDX_INPUT]);
-	kp_act_finish_move_event_init(&events[EVENT_IDX_ACT_FINISH_MOVE]);
-	kp_cap_finish_event_init(&events[EVENT_IDX_CAP_FINISH]);
-
 	while (passes > 0) {
 		pos = kp_act_locate();
 		if (!kp_act_pos_is_valid(pos)) {
-			return KP_CHECK_RC_OFF;
+			return KP_SAMPLE_RC_OFF;
 		}
 
-		/* If we're at a boundary */
-		if (pos == top || pos == bottom) {
-			/* Start a pass */
-			passes--;
-
-			/* Start the capture */
-			kp_cap_start(kp_cap_ch_conf_list,
-					ARRAY_SIZE(kp_cap_ch_conf_list),
-					kp_cap_timeout_us, kp_cap_bounce_us);
-			capturing = true;
-
-			/* Start moving to the opposite boundary */
-			kp_act_start_move_to((pos == top) ? bottom : top,
-						kp_act_speed);
-		/* Else we're somewhere else */
-		} else {
-			/* Do not start a pass */
-
-			/* Do not start the capture */
-			capturing = false;
-
-			/* Start moving to the closest boundary */
-			kp_act_start_move_to(
+		/* If we're not at a boundary */
+		if (pos != top && pos != bottom) {
+			/* Move to the closest boundary without capturing */
+			rc = kp_sample(
 				(abs(pos - top) < abs(pos - bottom))
 					? top : bottom,
-				kp_act_speed
+				NULL, 0
 			);
+			if (rc != KP_SAMPLE_RC_OK) {
+				return rc;
+			}
+			continue;
 		}
 
-		/* Move and capture */
-		for (moved = false, captured = false;
-				!(moved && (!capturing || captured));) {
-			while (k_poll(events,
-				      EVENT_IDX_CAP_FINISH +
-				      (capturing == true),
-				      K_FOREVER) != 0);
-
-			/* Handle input */
-			if (events[EVENT_IDX_INPUT].state) {
-				while (kp_input_get(&msg, K_FOREVER) != 0);
-				if (msg == KP_INPUT_MSG_ABORT) {
-					kp_act_abort();
-					kp_cap_abort();
-				}
-			}
-
-			/* Handle movement completion */
-			if (events[EVENT_IDX_ACT_FINISH_MOVE].state) {
-				move_rc = kp_act_finish_move(K_FOREVER);
-				moved = true;
-			}
-
-			/* Handle capture completion */
-			if (events[EVENT_IDX_CAP_FINISH].state) {
-				cap_rc = kp_cap_finish(
-					ch_res_list, ARRAY_SIZE(ch_res_list),
-					K_FOREVER
-				);
-				captured = true;
-			}
-
-			/* Reset event state */
-			for (i = 0; i < ARRAY_SIZE(events); i++) {
-				events[i].state = K_POLL_STATE_NOT_READY;
-			}
+		/* Capture moving to the opposite boundary */
+		rc = kp_sample(
+			(pos == top) ? bottom : top,
+			ch_res_list, ARRAY_SIZE(ch_res_list)
+		);
+		if (rc != KP_SAMPLE_RC_OK) {
+			return rc;
 		}
-
-		if (move_rc == KP_ACT_MOVE_RC_ABORTED ||
-				cap_rc == KP_CAP_RC_ABORTED) {
-			return KP_CHECK_RC_ABORTED;
-		}
-		if (move_rc == KP_ACT_MOVE_RC_OFF) {
-			return KP_CHECK_RC_OFF;
-		}
-		assert(move_rc == KP_ACT_MOVE_RC_OK);
-		assert(cap_rc == KP_CAP_RC_OK);
 
 		/* Check if any and all channels triggered */
 		for (i = 0, captured_channels = 0, triggered_channels = 0;
-		     capturing && i < ARRAY_SIZE(ch_res_list); i++) {
+		     i < ARRAY_SIZE(ch_res_list); i++) {
 			enum kp_cap_ch_status status = ch_res_list[i].status;
 			if (status != KP_CAP_CH_STATUS_DISABLED) {
 				captured_channels++;
@@ -835,13 +869,15 @@ kp_check(int32_t top, int32_t bottom,
 				triggered_channels == captured_channels) {
 			triggers++;
 		}
+
+		passes--;
 	}
 
 	if (ptriggers != NULL) {
 		*ptriggers = triggers;
 	}
 
-	return KP_CHECK_RC_OK;
+	return KP_SAMPLE_RC_OK;
 }
 
 /** Execute the "check" command */
@@ -892,12 +928,12 @@ kp_cmd_check(const struct shell *shell, size_t argc, char **argv)
 	/* Count the triggers */
 	switch (kp_check(kp_act_pos_top, kp_act_pos_bottom,
 				(size_t)passes, &triggers)) {
-		case KP_CHECK_RC_OK:
+		case KP_SAMPLE_RC_OK:
 			break;
-		case KP_CHECK_RC_ABORTED:
+		case KP_SAMPLE_RC_ABORTED:
 			shell_error(shell, "Aborted");
 			return 1;
-		case KP_CHECK_RC_OFF:
+		case KP_SAMPLE_RC_OFF:
 			shell_error(shell, "Actuator is off, aborted");
 			return 1;
 		default:
@@ -1017,12 +1053,12 @@ kp_cmd_tighten(const struct shell *shell, size_t argc, char **argv)
 		assert(_top < _bottom);                                 \
 		assert(_passes > 0);                                    \
 		switch (kp_check(_top, _bottom, _passes, _ptriggers)) { \
-			case KP_CHECK_RC_OK:                            \
+			case KP_SAMPLE_RC_OK:                           \
 				break;                                  \
-			case KP_CHECK_RC_ABORTED:                       \
+			case KP_SAMPLE_RC_ABORTED:                      \
 				shell_error(shell, "Aborted");          \
 				return 1;                               \
-			case KP_CHECK_RC_OFF:                           \
+			case KP_SAMPLE_RC_OFF:                          \
 				shell_error(shell,                      \
 					"Actuator is off, aborted");    \
 				return 1;                               \
