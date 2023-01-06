@@ -983,6 +983,7 @@ SHELL_CMD_ARG_REGISTER(check, NULL,
 static int
 kp_cmd_tighten(const struct shell *shell, size_t argc, char **argv)
 {
+	const char *arg;
 	long steps;
 	long passes;
 	int32_t start;
@@ -1017,13 +1018,14 @@ kp_cmd_tighten(const struct shell *shell, size_t argc, char **argv)
 	if (argc < 2) {
 		steps = 1;
 	} else {
-		if (!kp_parse_non_negative_number(argv[1], &steps) ||
+		arg = argv[1];
+		if (!kp_parse_non_negative_number(arg, &steps) ||
 				steps == 0) {
 			shell_error(
 				shell,
 				"Invalid number of steps to tighten to "
 				"(a number greater than zero expected): %s",
-				argv[1]
+				arg
 			);
 			return 1;
 		}
@@ -1033,13 +1035,14 @@ kp_cmd_tighten(const struct shell *shell, size_t argc, char **argv)
 	if (argc < 3) {
 		passes = 2;
 	} else {
-		if (!kp_parse_non_negative_number(argv[1], &passes) ||
+		arg = argv[2];
+		if (!kp_parse_non_negative_number(arg, &passes) ||
 				passes == 0) {
 			shell_error(
 				shell,
 				"Invalid number of passes "
 				"(a number greater than zero expected): %s",
-				argv[1]
+				arg
 			);
 			return 1;
 		}
