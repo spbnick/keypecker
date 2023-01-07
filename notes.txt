@@ -452,3 +452,98 @@ start? maybe mode as well, rounded to ms?).
 
 TODO: Make k_poll_event_init() accept NULL object with K_POLL_TYPE_IGNORE
 TODO: Consider making K_POLL_TYPE_* into an enum for safety.
+TODO: Unify format of shell command help messages, including argument
+      placement
+TODO: Consider testing how fast the keyboard can detect key pressures / how
+      many it misses at which speed.
+TODO: Figure out if we should check that the top position doesn't also hit the
+      trigger.
+---
+So, something like "measure [<passes> [brief|verbose]]"
+
+And verbose output looking like this:
+
+                      #0              #1
+                  DETECT          REPORT
+-------- --------------- ---------------
+ Up/Down        Time, us        Time, us
+-------- --------------- ---------------
+    Down           12003           23322
+      Up           11449           22334
+    Down           12003           23322
+      Up           11449           22334
+    Down           12003           23322
+      Up           11449           22334
+    Down           12003           23322
+      Up           11449           22334
+-------- --------------- ---------------
+ Up/Down     Triggers, %     Triggers, %
+-------- --------------- ---------------
+      Up             100             100
+    Down             100             100
+ Up&Down             100             100
+-------- --------------- ---------------
+ Up/Down    Time max, us    Time max, us
+-------- --------------- ---------------
+      Up           11449           22334
+    Down           12003           23322
+ Up&Down           11755           22802
+-------- --------------- ---------------
+ Up/Down    Time min, us    Time min, us
+-------- --------------- ---------------
+      Up           11449           22334
+    Down           12003           23322
+ Up&Down           11755           22802
+-------- --------------- ---------------
+ Up/Down   Time mean, us   Time mean, us
+-------- --------------- ---------------
+      Up           11449           22334
+    Down           12003           23322
+ Up&Down           11755           22802
+-------- --------------- ---------------
+ Up/Down   Time mode, ms   Time mode, ms
+-------- --------------- ---------------
+      Up              11              22
+    Down              12              23
+ Up&Down              11              22
+-------- --------------- ---------------
+Time, us        Triggers        Triggers
+-------- --------------- ---------------
+    Down 0            50 0            50
+   11000 |:___           |              
+   11200 |    :_         |              
+   11400 |   ___:        |              
+   11600 | _:            |              
+   11800 |:              |:___          
+   12000 |               |    :_        
+   12200 |               |   ___:       
+   12400 |               | _:           
+   12600 |               |:             
+-------- --------------- ---------------
+      Up 0            50 0            50
+   11000 |:___           |              
+   11200 |    :_         |              
+   11400 |   ___:        |              
+   11600 | _:            |              
+   11800 |:              |:___          
+   12000 |               |    :_        
+   12200 |               |   ___:       
+   12400 |               | _:           
+   12600 |               |:             
+-------- --------------- ---------------
+ Up&Down 0            50 0            50
+   11000 |:___           |              
+   11200 |    :_         |              
+   11400 |   ___:        |              
+   11600 | _:            |              
+   11800 |:              |:___          
+   12000 |               |    :_        
+   12200 |               |   ___:       
+   12400 |               | _:           
+   12600 |               |:             
+-------- --------------- ---------------
+
+Ah, would be nice, but we can't use Unicode characters, because printf equates
+bytes to characters. Let's just use words.
+
+FIXME: First capture fails sometimes

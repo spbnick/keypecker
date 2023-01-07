@@ -1181,25 +1181,304 @@ SHELL_CMD_ARG_REGISTER(tighten, NULL,
 			"specified number of passes (default 4).",
 			kp_cmd_tighten, 1, 2);
 
+/** Format string for the first column of "measure" command output */
+static char kp_cmd_measure_col0_fmt[16] = {0, };
+/** Format string for successive columns of "measure" command output */
+static char kp_cmd_measure_coln_fmt[16] = {0, };
+/** Width of the first column of "measure" command output */
+#define KP_CMD_MEASURE_COL0_WIDTH	(KP_CAP_TIME_MAX_DIGITS + 1)
+/** Width of successive columns of "measure" command output */
+#define KP_CMD_MEASURE_COLN_WIDTH	KP_CAP_CH_NAME_MAX_LEN
+/** Size of the column buffer for "measure" command output */
+#define KP_CMD_MEASURE_COL_BUF_SIZE \
+	(MAX(KP_CMD_MEASURE_COL0_WIDTH, KP_CMD_MEASURE_COLN_WIDTH + 1) + 1)
+
+/** Initialize the global state of "measure" command output */
+static void
+kp_cmd_measure_output_setup(void)
+{
+	int rc;
+	rc = snprintf(kp_cmd_measure_col0_fmt,
+		      sizeof(kp_cmd_measure_col0_fmt),
+		      "%%%zu.%zus",
+		      KP_CMD_MEASURE_COL0_WIDTH, KP_CMD_MEASURE_COL0_WIDTH);
+	assert(rc >= 0);
+	assert(rc < sizeof(kp_cmd_measure_col0_fmt));
+	rc = snprintf(kp_cmd_measure_coln_fmt,
+		      sizeof(kp_cmd_measure_coln_fmt),
+		      " %%%zu.%zus",
+		      KP_CMD_MEASURE_COLN_WIDTH, KP_CMD_MEASURE_COLN_WIDTH);
+	assert(rc >= 0);
+	assert(rc < sizeof(kp_cmd_measure_coln_fmt));
+}
+
+/** The "measure" command output state */
+struct kp_cmd_measure_output {
+	/** The shell to output to */
+	const struct shell *shell;
+	/** The number of columns to output */
+	size_t col_num;
+	/** The index of the next column to output */
+	size_t col_idx;
+	/** The column formatting buffer */
+	char col_buf[KP_CMD_MEASURE_COL_BUF_SIZE];
+};
+
+/**
+ * Initializer for a measure output state
+ *
+ * @param _shell	The shell to output to.
+ * @param _col_num	Number of columns to output.
+ */
+#define KP_CMD_MEASURE_OUTPUT_INIT(_shell, _col_num) \
+	(struct kp_cmd_measure_output){     \
+		.shell = _shell,            \
+		.col_num = _col_num,        \
+		.col_idx = 0,               \
+		.col_buf = {0, },           \
+	}
+
+/**
+ * Print a column to "measure" command output.
+ *
+ * @param out	The output to print to.
+ * @param fmt	The format string to use to format the column.
+ * @param ...	The arguments for the format string.
+ */
+static void
+kp_cmd_measure_output_col(struct kp_cmd_measure_output *out,
+			  const char *restrict fmt, ...)
+{
+	va_list args;
+	int rc;
+
+	assert(out != NULL);
+	assert(out->col_idx < out->col_num);
+	assert(fmt != NULL);
+
+	va_start(args, fmt);
+	rc = vsnprintf(out->col_buf, sizeof(out->col_buf), fmt, args);
+	va_end(args);
+
+	assert(rc >= 0);
+	assert(rc < sizeof(out->col_buf));
+
+	shell_fprintf(out->shell, SHELL_NORMAL,
+		      (out->col_idx == 0 ? kp_cmd_measure_col0_fmt
+				     : kp_cmd_measure_coln_fmt),
+		      out->col_buf);
+	out->col_idx++;
+}
+
+/**
+ * Print a newline to "measure" command output.
+ *
+ * @param out	The output to print to.
+ */
+static void
+kp_cmd_measure_output_nl(struct kp_cmd_measure_output *out)
+{
+	assert(out != NULL);
+	assert(out->col_idx == 0 || out->col_idx == out->col_num);
+	shell_fprintf(out->shell, SHELL_NORMAL, "\n");
+	out->col_idx = 0;
+}
+
+/**
+ * Print a separator line to "measure" command output.
+ *
+ * @param out		The output to print to.
+ */
+static void
+kp_cmd_measure_output_sep(struct kp_cmd_measure_output *out)
+{
+	size_t i;
+
+	assert(out != NULL);
+	assert(out->col_idx == 0);
+
+	memset(out->col_buf, '-', sizeof(out->col_buf) - 1);
+	out->col_buf[sizeof(out->col_buf) - 1] = '\0';
+
+	for (i = 0; i < out->col_num; i++) {
+		shell_fprintf(out->shell, SHELL_NORMAL,
+			      (i == 0 ? kp_cmd_measure_col0_fmt
+				      : kp_cmd_measure_coln_fmt),
+			      out->col_buf);
+	}
+	shell_fprintf(out->shell, SHELL_NORMAL, "\n");
+	out->col_idx = 0;
+}
+
+#define COL(_out, _args...) kp_cmd_measure_output_col(_out, _args)
+#define NL(_out) kp_cmd_measure_output_nl(_out)
+#define SEP(_out) kp_cmd_measure_output_sep(_out)
+
+/**
+ * Print basic statistics for "measure" command output.
+ *
+ * @param out			The output to print to.
+ * @param start_top		True if the first capture was going down.
+ * 				False otherwise.
+ * @param ch_res_list_list	A list (array) of channel result lists to
+ *				summarize. Contains "passes" number of channel
+ *				lists (arrays), each with KP_CAP_CH_NUM
+ *				elements.
+ * @param passes		Number of passes (channel result lists).
+ * 				Must be greater than one.
+ */
+static void
+kp_cmd_measure_output_stats(
+		struct kp_cmd_measure_output *out,
+		bool start_top,
+		struct kp_cap_ch_res (*ch_res_list_list)[KP_CAP_CH_NUM],
+		size_t passes)
+{
+	bool timeout[KP_CAP_CH_NUM] = {0, };
+	bool overcapture[KP_CAP_CH_NUM] = {0, };
+	bool unknown[KP_CAP_CH_NUM] = {0, };
+	const char *dir_names[3] = {"Up", "Down", "Up&Down"};
+	const char *metric_names[] = {
+		"Triggers, %",
+		"Time min, us",
+		"Time max, us",
+		"Time mean, us"
+	};
+	const size_t metric_num = ARRAY_SIZE(metric_names);
+	uint32_t metric_data[metric_num][KP_CAP_CH_NUM][3];
+	uint32_t (*triggers)[KP_CAP_CH_NUM][3] = &metric_data[0];
+	uint32_t (*min)[KP_CAP_CH_NUM][3] = &metric_data[1];
+	uint32_t (*max)[KP_CAP_CH_NUM][3] = &metric_data[2];
+	uint32_t (*mean)[KP_CAP_CH_NUM][3] = &metric_data[3];
+	/* Values found per channel per direction */
+	bool got_value[KP_CAP_CH_NUM][3] = {{0, }, };
+	size_t pass, ch, metric, dir;
+	struct kp_cap_ch_res *ch_res;
+
+	assert(out != NULL);
+	assert((start_top & 1) == start_top);
+	assert(ch_res_list_list != NULL);
+	assert(passes > 1);
+
+	/* Initialize metrics */
+	for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
+		for (dir = 0; dir < 3; dir++) {
+			(*triggers)[ch][dir] = 0;
+			(*min)[ch][dir] = UINT32_MAX;
+			(*max)[ch][dir] = 0;
+		}
+	}
+
+	/* Find minimums and maximums */
+	for (pass = 0; pass < passes; pass++) {
+		for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
+			ch_res = &ch_res_list_list[pass][ch];
+			switch (ch_res->status) {
+			case KP_CAP_CH_STATUS_DISABLED:
+				break;
+			case KP_CAP_CH_STATUS_TIMEOUT:
+				timeout[ch] = true;
+				break;
+			case KP_CAP_CH_STATUS_OVERCAPTURE:
+				overcapture[ch] = true;
+				/* FALLTHROUGH */
+			case KP_CAP_CH_STATUS_OK:
+				dir = (pass & 1) ^ start_top;
+#define ADJ_MIN(_lvalue) (_lvalue = MIN(_lvalue, ch_res->value_us))
+#define ADJ_MAX(_lvalue) (_lvalue = MAX(_lvalue, ch_res->value_us))
+				/* Got trigger/value for this direction */
+				(*triggers)[ch][dir]++;
+				got_value[ch][dir] = true;
+				ADJ_MIN((*min)[ch][dir]);
+				ADJ_MAX((*max)[ch][dir]);
+				/* Got trigger/value for either direction */
+				(*triggers)[ch][2]++;
+				got_value[ch][2] = true;
+				ADJ_MIN((*min)[ch][2]);
+				ADJ_MAX((*max)[ch][2]);
+#undef ADJ_MAX
+#undef ADJ_MIN
+				break;
+			default:
+				unknown[ch] = true;
+				break;
+			}
+		}
+	}
+
+	/* Convert trigger counters to percentage */
+	for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
+		for (dir = 0; dir < 3; dir++) {
+			(*triggers)[ch][dir] =
+				(*triggers)[ch][dir] * 100 /
+				(dir > 1 ? passes
+					 : ((passes >> 1) +
+					    (passes & (dir == start_top))));
+		}
+	}
+
+	/* Calculate means */
+	for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
+		for (dir = 0; dir < 3; dir++) {
+			(*mean)[ch][dir] =
+				((*min)[ch][dir] + (*max)[ch][dir]) / 2;
+		}
+	}
+
+	/* Output results for each metric */
+	for (metric = 0; metric < metric_num; metric++) {
+		/* Output metric header */
+		SEP(out);
+		COL(out, "Up/Down");
+		for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
+			if (kp_cap_ch_conf_list[ch].capture) {
+				COL(out, "%s", metric_names[metric]);
+			}
+		}
+		NL(out);
+		SEP(out);
+		/* Output data per direction */
+		for (dir = 0; dir < 3; dir++) {
+			COL(out, "%s", dir_names[dir]);
+			for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
+				if (kp_cap_ch_conf_list[ch].capture) {
+					if (!got_value[ch][dir]) {
+						COL(out, "!");
+						continue;
+					}
+					COL(out, "%s%s%s%u",
+					    overcapture[ch] ? "+" : "",
+					    unknown[ch] ? "?" : "",
+					    timeout[ch] ? "!" : "",
+					    metric_data[metric][ch][dir]);
+				}
+			}
+			NL(out);
+		}
+	}
+}
+
 /** Execute the "measure" command */
 static int
 kp_cmd_measure(const struct shell *shell, size_t argc, char **argv)
 {
+	/* Capture result list */
+	static struct kp_cap_ch_res ch_res_list_list[256][KP_CAP_CH_NUM];
 	/* Poll event indices */
-	enum {
-		EVENT_IDX_INPUT = 0,
-		EVENT_IDX_ACT_FINISH_MOVE,
-		EVENT_IDX_CAP_FINISH,
-		EVENT_NUM
-	};
-	struct k_poll_event events[EVENT_NUM];
-	enum kp_act_move_rc move_rc = KP_ACT_MOVE_RC_OK;
-	enum kp_cap_rc cap_rc = KP_CAP_RC_OK;
-	struct kp_cap_ch_res ch_res_list[ARRAY_SIZE(kp_cap_ch_conf_list)];
+	const char *arg;
+	long passes;
+	long verbosity;
+	size_t i;
+	size_t enabled_ch_num;
+	size_t named_ch_num;
+	struct kp_cmd_measure_output out;
+	static struct kp_cap_ch_res *ch_res;
+	size_t pass;
+	enum kp_sample_rc rc = KP_CAP_RC_OK;
 	int32_t start_pos;
-	bool moved = false;
-	bool captured = false;
-	enum kp_input_msg msg;
+	int32_t pos;
+	/* True if we started at the top (and went down), false otherwise */
+	bool start_top;
 
 	/* Check for power */
 	if (kp_act_is_off()) {
@@ -1216,110 +1495,203 @@ kp_cmd_measure(const struct shell *shell, size_t argc, char **argv)
 		return 1;
 	}
 
+	/* Collect channel stats */
+	for (i = 0, enabled_ch_num = 0, named_ch_num = 0;
+		i < ARRAY_SIZE(kp_cap_ch_conf_list); i++) {
+		if (kp_cap_ch_conf_list[i].capture) {
+			enabled_ch_num++;
+		}
+		if (kp_cap_ch_conf_list[i].name[0] != '\0') {
+			named_ch_num++;
+		}
+	}
+	/* Check that at least one channel is enabled */
+	if (enabled_ch_num == 0) {
+		shell_error(shell, "No enabled channels, aborting");
+		shell_info(shell, "Use \"set ch\" command to enable");
+		return 1;
+	}
+
 	/* Return to the shell and restart in an input-diverted thread */
 	KP_SHELL_YIELD(kp_cmd_measure, kp_input_bypass_cb);
 	kp_input_reset();
 
+	/* Parse the number of passes to measure */
+	if (argc < 2) {
+		passes = 1;
+	} else {
+		arg = argv[1];
+		if (!kp_parse_non_negative_number(arg, &passes) ||
+				passes == 0 ||
+				passes > ARRAY_SIZE(ch_res_list_list)) {
+			shell_error(
+				shell,
+				"Invalid number of passes "
+				"(1-%zu expected): %s",
+				ARRAY_SIZE(ch_res_list_list), arg
+			);
+			return 1;
+		}
+	}
+
+	/* Parse the verbosity level */
+	if (argc < 3) {
+		verbosity = 0;
+	} else {
+		arg = argv[2];
+		if (!kp_parse_non_negative_number(arg, &verbosity) ||
+				verbosity > 2) {
+			shell_error(
+				shell,
+				"Invalid verbosity (0-2 expected): %s",
+				arg
+			);
+			return 1;
+		}
+	}
+
 	/* Remember the start position */
 	start_pos = kp_act_locate();
 
-	/* Move to the top */
-	move_rc = kp_act_move_to(kp_act_pos_top, kp_act_speed);
-	if (move_rc != KP_ACT_MOVE_RC_OK) {
+	/* Move to the closest boundary without capturing */
+	pos = kp_act_locate();
+	if (!kp_act_pos_is_valid(pos)) {
+		rc = KP_SAMPLE_RC_OFF;
+		goto finish;
+	}
+	start_top = abs(pos - kp_act_pos_top) < abs(pos - kp_act_pos_bottom);
+	rc = kp_sample(start_top ? kp_act_pos_top : kp_act_pos_bottom,
+		       NULL, 0);
+	if (rc != KP_SAMPLE_RC_OK) {
 		goto finish;
 	}
 
-	/* Initialize events */
-	kp_input_get_event_init(&events[EVENT_IDX_INPUT]);
-	kp_act_finish_move_event_init(&events[EVENT_IDX_ACT_FINISH_MOVE]);
-	kp_cap_finish_event_init(&events[EVENT_IDX_CAP_FINISH]);
+	/* Initialize the output */
+	out = KP_CMD_MEASURE_OUTPUT_INIT(shell, enabled_ch_num + 1);
 
-	/* Start the capture */
-	kp_cap_start(kp_cap_ch_conf_list, ARRAY_SIZE(kp_cap_ch_conf_list),
-			kp_cap_timeout_us, kp_cap_bounce_us);
-	/* Start moving towards the bottom */
-	kp_act_start_move_to(kp_act_pos_bottom, kp_act_speed);
-
-	while (!(moved && captured)) {
-		while (k_poll(events, ARRAY_SIZE(events), K_FOREVER) != 0);
-
-		if (events[EVENT_IDX_INPUT].state) {
-			while (kp_input_get(&msg, K_FOREVER) != 0);
-			if (msg == KP_INPUT_MSG_ABORT) {
-				kp_act_abort();
-				kp_cap_abort();
-			}
-		}
-
-		if (events[EVENT_IDX_ACT_FINISH_MOVE].state) {
-			move_rc = kp_act_finish_move(K_FOREVER);
-			moved = true;
-		}
-
-		if (events[EVENT_IDX_CAP_FINISH].state) {
-			cap_rc = kp_cap_finish(
-				ch_res_list, ARRAY_SIZE(ch_res_list),
-				K_FOREVER
-			);
-			captured = true;
-		}
-
-		/* Reset event state */
-		for (size_t i = 0; i < ARRAY_SIZE(events); i++) {
-			events[i].state = K_POLL_STATE_NOT_READY;
+	/* Output the channel index header */
+	COL(&out, "");
+	for (i = 0; i < ARRAY_SIZE(kp_cap_ch_conf_list); i++) {
+		if (kp_cap_ch_conf_list[i].capture) {
+			COL(&out, "#%zu", i);
 		}
 	}
+	NL(&out);
+
+	/* Output the channel name header, if any are named */
+	if (named_ch_num != 0) {
+		COL(&out, "");
+		for (i = 0; i < ARRAY_SIZE(kp_cap_ch_conf_list); i++) {
+			if (kp_cap_ch_conf_list[i].capture) {
+				COL(&out, "%s", kp_cap_ch_conf_list[i].name);
+			}
+		}
+		NL(&out);
+	}
+
+	/* Output timing header */
+	SEP(&out);
+	COL(&out, "Up/Down");
+	for (i = 0; i < ARRAY_SIZE(kp_cap_ch_conf_list); i++) {
+		if (kp_cap_ch_conf_list[i].capture) {
+			COL(&out, "Time, us");
+		}
+	}
+	NL(&out);
+	SEP(&out);
+
+	/* Capture the requested number of passes */
+	for (pass = 0; pass < passes; pass++) {
+		bool at_top = (pass & 1) ^ start_top;
+
+		/* Capture moving to the opposite boundary */
+		rc = kp_sample(
+			at_top ? kp_act_pos_bottom : kp_act_pos_top,
+			ch_res_list_list[pass],
+			ARRAY_SIZE(ch_res_list_list[pass])
+		);
+		if (rc != KP_SAMPLE_RC_OK) {
+			goto finish;
+		}
+
+		COL(&out, at_top ? "Down" : "Up");
+		for (i = 0; i < ARRAY_SIZE(ch_res_list_list[pass]); i++) {
+			ch_res = &ch_res_list_list[pass][i];
+			switch (ch_res->status) {
+			case KP_CAP_CH_STATUS_DISABLED:
+				break;
+			case KP_CAP_CH_STATUS_TIMEOUT:
+				COL(&out, "!");
+				break;
+			case KP_CAP_CH_STATUS_OVERCAPTURE:
+				COL(&out, "+%u", ch_res->value_us);
+				break;
+			case KP_CAP_CH_STATUS_OK:
+				COL(&out, "%u", ch_res->value_us);
+				break;
+			default:
+				COL(&out, "?");
+				break;
+			}
+		}
+		NL(&out);
+	}
+
+	if (passes > 1) {
+		kp_cmd_measure_output_stats(
+			&out, start_top, ch_res_list_list, passes
+		);
+	}
+
+	SEP(&out);
 
 finish:
 
-	if (move_rc == KP_ACT_MOVE_RC_OFF) {
-		shell_error(shell, "Actuator is off, aborted");
-	} else if (cap_rc == KP_CAP_RC_ABORTED ||
-			move_rc == KP_ACT_MOVE_RC_ABORTED) {
-		shell_error(shell, "Aborted");
-	}
-
-	if (move_rc != KP_ACT_MOVE_RC_OK || cap_rc != KP_CAP_RC_OK) {
+	/* If we failed */
+	if (rc != KP_SAMPLE_RC_OK) {
 		return 1;
 	}
 
-	/* Output results */
-	for (size_t i = 0; i < ARRAY_SIZE(ch_res_list); i++) {
-		struct kp_cap_ch_conf *ch_conf =
-			&kp_cap_ch_conf_list[i];
-		struct kp_cap_ch_res *ch_res = &ch_res_list[i];
-		const char *status_str =
-			kp_cap_ch_status_to_str(ch_res->status);
-		switch (ch_res->status) {
-		case KP_CAP_CH_STATUS_DISABLED:
+	/* Try to return to the start position */
+	switch (kp_act_move_to(start_pos, kp_act_speed)) {
+		case KP_ACT_MOVE_RC_OK:
 			break;
-		case KP_CAP_CH_STATUS_OK:
-		case KP_CAP_CH_STATUS_OVERCAPTURE:
-			shell_print(
-				shell, "#%zu: %-15s %-11s %7u us",
-				i, ch_conf->name, status_str,
-				ch_res->value_us
+		case KP_ACT_MOVE_RC_ABORTED:
+			shell_warn(
+				shell,
+				"Move back to the start position "
+				"was aborted"
+			);
+			break;
+		case KP_ACT_MOVE_RC_OFF:
+			shell_warn(
+				shell,
+				"Couldn't move back to the start position - "
+				"actuator is off"
 			);
 			break;
 		default:
-			shell_print(
-				shell, "#%zu: %-15s %-11s",
-				i, ch_conf->name, status_str
+			shell_error(
+				shell,
+				"Unexpected error moving back to the start "
+				"position"
 			);
 			break;
-		}
 	}
 
-	/* Return to the start position */
-	move_rc = kp_act_move_to(start_pos, kp_act_speed);
-
-	return move_rc != KP_ACT_MOVE_RC_OK;
+	return 0;
 }
 
+#undef SEP
+#undef COL
+#undef NL
+
 SHELL_CMD_ARG_REGISTER(measure, NULL,
-			"Move actuator between top and bottom positions, "
-			"capturing the timing on all enabled channels",
-			kp_cmd_measure, 1, 0);
+			"Measure timing on all enabled channels for "
+			"specified number of passes (default 1), and output "
+			"results with given level of verbosity "
+			"(0-2, default 0)",
+			kp_cmd_measure, 1, 2);
 
 #define TIMER_NODE
 void
@@ -1328,6 +1700,9 @@ main(void)
 	const struct device *dev;
 	uint32_t dtr = 0;
 	size_t i;
+
+	/* Initialize the global state of "measure" command output */
+	kp_cmd_measure_output_setup();
 
 	/* Initialize USB */
 	if (usb_enable(NULL)) {
