@@ -88,12 +88,12 @@ extern const char *kp_cap_ch_status_to_str(enum kp_cap_ch_status status);
 /** Channel capture result */
 struct kp_cap_ch_res {
 	/** Capture status */
-	enum kp_cap_ch_status status;
+	enum kp_cap_ch_status status:4;
 	/**
 	 * Captured time value.
 	 * Only valid if status is OK or OVERCAPTURE.
 	 */
-	uint32_t value_us;
+	uint32_t value_us:28;
 };
 
 /**
