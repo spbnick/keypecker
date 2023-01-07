@@ -26,8 +26,14 @@ extern "C" {
 /** Maximum time capture of all selected channels can take, us */
 #define KP_CAP_TIME_MAX_US	((uint32_t)KP_CAP_RES_US * UINT16_MAX)
 
+/** Number of decimal digits in the maximum capture time, us */
+#define KP_CAP_TIME_MAX_DIGITS	7
+
 /** Number of available capture channels */
 #define KP_CAP_CH_NUM	2
+
+/** Maximum number of characters in a user's channel name */
+#define KP_CAP_CH_NAME_MAX_LEN	15
 
 /** Capture channel configuration */
 struct kp_cap_ch_conf {
@@ -40,7 +46,7 @@ struct kp_cap_ch_conf {
 	bool rising;
 
 	/** User's channel name */
-	char name[16];
+	char name[KP_CAP_CH_NAME_MAX_LEN + 1];
 };
 
 /** Channel capture status */
