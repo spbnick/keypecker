@@ -1313,6 +1313,7 @@ kp_cmd_measure_output_sep(struct kp_cmd_measure_output *out)
 #define COL(_out, _args...) kp_cmd_measure_output_col(_out, _args)
 #define NL(_out) kp_cmd_measure_output_nl(_out)
 #define SEP(_out) kp_cmd_measure_output_sep(_out)
+#define DIR_NUM 3
 
 /**
  * Print basic statistics for "measure" command output.
@@ -1337,7 +1338,7 @@ kp_cmd_measure_output_stats(
 	bool timeout[KP_CAP_CH_NUM] = {0, };
 	bool overcapture[KP_CAP_CH_NUM] = {0, };
 	bool unknown[KP_CAP_CH_NUM] = {0, };
-	const char *dir_names[3] = {"Up", "Down", "Up&Down"};
+	const char *dir_names[DIR_NUM] = {"Up", "Down", "Both"};
 	const char *metric_names[] = {
 		"Triggers, %",
 		"Time min, us",
@@ -1345,13 +1346,13 @@ kp_cmd_measure_output_stats(
 		"Time mean, us"
 	};
 	const size_t metric_num = ARRAY_SIZE(metric_names);
-	uint32_t metric_data[metric_num][KP_CAP_CH_NUM][3];
-	uint32_t (*triggers)[KP_CAP_CH_NUM][3] = &metric_data[0];
-	uint32_t (*min)[KP_CAP_CH_NUM][3] = &metric_data[1];
-	uint32_t (*max)[KP_CAP_CH_NUM][3] = &metric_data[2];
-	uint32_t (*mean)[KP_CAP_CH_NUM][3] = &metric_data[3];
+	uint32_t metric_data[metric_num][KP_CAP_CH_NUM][DIR_NUM];
+	uint32_t (*triggers)[KP_CAP_CH_NUM][DIR_NUM] = &metric_data[0];
+	uint32_t (*min)[KP_CAP_CH_NUM][DIR_NUM] = &metric_data[1];
+	uint32_t (*max)[KP_CAP_CH_NUM][DIR_NUM] = &metric_data[2];
+	uint32_t (*mean)[KP_CAP_CH_NUM][DIR_NUM] = &metric_data[3];
 	/* Values found per channel per direction */
-	bool got_value[KP_CAP_CH_NUM][3] = {{0, }, };
+	bool got_value[KP_CAP_CH_NUM][DIR_NUM] = {{0, }, };
 	size_t pass, ch, metric, dir;
 	struct kp_cap_ch_res *ch_res;
 
@@ -1362,7 +1363,7 @@ kp_cmd_measure_output_stats(
 
 	/* Initialize metrics */
 	for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
-		for (dir = 0; dir < 3; dir++) {
+		for (dir = 0; dir < DIR_NUM; dir++) {
 			(*triggers)[ch][dir] = 0;
 			(*min)[ch][dir] = UINT32_MAX;
 			(*max)[ch][dir] = 0;
@@ -1408,7 +1409,7 @@ kp_cmd_measure_output_stats(
 
 	/* Convert trigger counters to percentage */
 	for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
-		for (dir = 0; dir < 3; dir++) {
+		for (dir = 0; dir < DIR_NUM; dir++) {
 			(*triggers)[ch][dir] =
 				(*triggers)[ch][dir] * 100 /
 				(dir > 1 ? passes
@@ -1419,7 +1420,7 @@ kp_cmd_measure_output_stats(
 
 	/* Calculate means */
 	for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
-		for (dir = 0; dir < 3; dir++) {
+		for (dir = 0; dir < DIR_NUM; dir++) {
 			(*mean)[ch][dir] =
 				((*min)[ch][dir] + (*max)[ch][dir]) / 2;
 		}
@@ -1438,7 +1439,7 @@ kp_cmd_measure_output_stats(
 		NL(out);
 		SEP(out);
 		/* Output data per direction */
-		for (dir = 0; dir < 3; dir++) {
+		for (dir = 0; dir < DIR_NUM; dir++) {
 			COL(out, "%s", dir_names[dir]);
 			for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
 				if (kp_cap_ch_conf_list[ch].capture) {
@@ -1682,6 +1683,7 @@ finish:
 	return 0;
 }
 
+#undef DIR_NUM
 #undef SEP
 #undef COL
 #undef NL
