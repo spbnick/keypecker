@@ -531,19 +531,40 @@ Time, us        Triggers        Triggers
    12400 |               | _:           
    12600 |               |:             
 -------- --------------- ---------------
- Up&Down 0            50 0            50
-   11000 |:___           |              
-   11200 |    :_         |              
-   11400 |   ___:        |              
-   11600 | _:            |              
-   11800 |:              |:___          
-   12000 |               |    :_        
-   12200 |               |   ___:       
-   12400 |               | _:           
-   12600 |               |:             
+    Both 0            50 0            50
+         |___	       : |
+   11000 |   |         : |              
+   11200 |    |_       : |              
+   11400 |   ___|      : |              
+   11600 | _|          : |              
+   11800 ||___         : |:___          
+   12000 |    |________: |    :_        
+   12200 |         ____| |   ___:       
+   12400 |   _____|    : | _:           
+   12600 |__|          : |:             
+   12600 |             : |:             
+   12600 |             : |:             
+   12600 |             : |:             
+   12600 |             : |:             
+   12600 |             : |:             
+   12600 |             : |:             
+   12600 |             : |:             
 -------- --------------- ---------------
 
 Ah, would be nice, but we can't use Unicode characters, because printf equates
 bytes to characters. Let's just use words.
 
 FIXME: First capture fails sometimes
+
+A shorter output without breakdown for direction could look like this,
+perhaps:
+
+-------- --------------- ---------------
+  Metric           Value           Value
+-------- --------------- ---------------
+Trigs, %             100             100
+ Min, us           11449           22334
+ Max, us           11755           23322
+Mean, us           11623           22750
+Mode, us           11623           22750
+

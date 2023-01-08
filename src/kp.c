@@ -15,6 +15,7 @@
 #include <stm32_ll_tim.h>
 #include <assert.h>
 #include <stdlib.h>
+#include <sys/types.h>
 #include <strings.h>
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
@@ -1459,6 +1460,181 @@ kp_cmd_measure_output_stats(
 	}
 }
 
+/**
+ * Print a time histogram for "measure" command output.
+ *
+ * @param out			The output to print to.
+ * @param start_top		True if the first capture was going down.
+ * 				False otherwise.
+ * @param ch_res_list_list	A list (array) of channel result lists to
+ *				summarize. Contains "passes" number of channel
+ *				lists (arrays), each with KP_CAP_CH_NUM
+ *				elements.
+ * @param passes		Number of passes (channel result lists).
+ * 				Must be greater than zero.
+ */
+static void
+kp_cmd_measure_output_histogram(
+		struct kp_cmd_measure_output *out,
+		bool start_top,
+		struct kp_cap_ch_res (*ch_res_list_list)[KP_CAP_CH_NUM],
+		size_t passes)
+{
+#define STEP_NUM 16
+#define CHAR_NUM (KP_CMD_MEASURE_COLN_WIDTH - 1)
+	const char *dir_names[DIR_NUM] = {"Up", "Down", "Both"};
+	uint32_t min, max;
+	uint32_t step_size;
+	size_t step_passes[KP_CAP_CH_NUM][DIR_NUM][STEP_NUM] = {{{0, }}};
+	size_t max_step_passes[KP_CAP_CH_NUM][DIR_NUM] = {{0, }};
+	size_t ch, pass, dir;
+	struct kp_cap_ch_res *ch_res;
+	ssize_t step_idx;
+	uint32_t step_min;
+	char char_buf[CHAR_NUM + 2] = {0, };
+	size_t char_idx;
+	size_t chars, next_chars;
+	char c;
+
+	assert(out != NULL);
+	assert((start_top & 1) == start_top);
+	assert(ch_res_list_list != NULL);
+	assert(passes > 0);
+
+	/* Find minimum and maximum time for all channels */
+	min = UINT32_MAX;
+	max = 0;
+	for (pass = 0; pass < passes; pass++) {
+		for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
+			ch_res = &ch_res_list_list[pass][ch];
+			if (ch_res->status == KP_CAP_CH_STATUS_OK ||
+			    ch_res->status ==
+				KP_CAP_CH_STATUS_OVERCAPTURE) {
+				min = MIN(min, ch_res->value_us);
+				max = MAX(max, ch_res->value_us);
+			}
+		}
+	}
+
+	/* Calculate histogram values */
+	step_size = (max - min) / STEP_NUM;
+	for (pass = 0; pass < passes; pass++) {
+		dir = (pass & 1) ^ start_top;
+		for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
+			if (!kp_cap_ch_conf_list[ch].capture) {
+				continue;
+			}
+			ch_res = &ch_res_list_list[pass][ch];
+			if (ch_res->status != KP_CAP_CH_STATUS_OK &&
+			    ch_res->status != KP_CAP_CH_STATUS_OVERCAPTURE) {
+				continue;
+			}
+			step_idx = MIN(
+				(ch_res->value_us - min) / step_size,
+				STEP_NUM - 1
+			);
+			/* Count this direction */
+			step_passes[ch][dir][step_idx]++;
+			/* Count both directions */
+			step_passes[ch][2][step_idx]++;
+		}
+	}
+
+	/* Calculate histogram maximums per channel */
+	for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
+		for (dir = 0; dir < DIR_NUM; dir++) {
+			for (step_idx = 0; step_idx < STEP_NUM; step_idx++) {
+				max_step_passes[ch][dir] = MAX(
+					max_step_passes[ch][dir],
+					step_passes[ch][dir][step_idx]
+				);
+			}
+		}
+	}
+
+	/* Scale histogram down to characters */
+	for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
+		for (dir = 0; dir < DIR_NUM; dir++) {
+			for (step_idx = 0; step_idx < STEP_NUM; step_idx++) {
+				step_passes[ch][dir][step_idx] =
+					step_passes[ch][dir][step_idx] *
+					CHAR_NUM / max_step_passes[ch][dir];
+			}
+		}
+	}
+
+	/* Output header */
+	SEP(out);
+	COL(out, "Time, us");
+	for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
+		COL(out, "Triggers");
+	}
+	NL(out);
+
+	/* Output histograms per direction */
+	for (dir = 0; dir < DIR_NUM; dir++) {
+		/* Output direction header */
+		SEP(out);
+		COL(out, "%s", dir_names[dir]);
+		for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
+			COL(out, "0%*zu", CHAR_NUM, max_step_passes[ch][dir]);
+		}
+		NL(out);
+		/* For each line of histograms (step_num + 2) */
+		for (step_idx = -1, step_min = min - step_size;
+		     step_idx <= STEP_NUM;
+		     step_idx++, step_min += step_size) {
+			/* Output line header value */
+			if (step_idx < 0) {
+				COL(out, "");
+			} else {
+				COL(out, "%u", step_min);
+			}
+			/* Output histogram bars per channel */
+			for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
+				if (!kp_cap_ch_conf_list[ch].capture) {
+					continue;
+				}
+				chars = (step_idx >= 0 && step_idx < STEP_NUM)
+					? step_passes[ch][dir][step_idx]
+					: 0;
+				next_chars = (step_idx < STEP_NUM - 1)
+					? step_passes[ch][dir][step_idx + 1]
+					: 0;
+				/* For each character in the column buffer */
+				for (char_idx = 0; char_idx <= CHAR_NUM;
+				     char_idx++) {
+					if (char_idx == 0) {
+						c = '|';
+					} else if (char_idx == chars) {
+						c = '|';
+					} else if (char_idx == CHAR_NUM) {
+						c = ':';
+					} else if (char_idx > chars) {
+						if (char_idx < next_chars) {
+							c = '_';
+						} else {
+							c = ' ';
+						}
+					} else if (char_idx < chars) {
+						if (char_idx > next_chars) {
+							c = '_';
+						} else {
+							c = ' ';
+						}
+					}
+					char_buf[char_idx] = c;
+				}
+				COL(out, "%s", char_buf);
+			}
+			NL(out);
+		}
+	}
+
+#undef CHAR_NUM
+#undef STEP_NUM
+}
+
 /** Execute the "measure" command */
 static int
 kp_cmd_measure(const struct shell *shell, size_t argc, char **argv)
@@ -1640,6 +1816,9 @@ kp_cmd_measure(const struct shell *shell, size_t argc, char **argv)
 
 	if (passes > 1) {
 		kp_cmd_measure_output_stats(
+			&out, start_top, ch_res_list_list, passes
+		);
+		kp_cmd_measure_output_histogram(
 			&out, start_top, ch_res_list_list, passes
 		);
 	}
