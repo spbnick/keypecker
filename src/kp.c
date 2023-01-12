@@ -1565,7 +1565,7 @@ kp_cmd_measure_output_histogram(
 
 	/* Output header */
 	SEP(out);
-	COL(out, "Time, us");
+	COL(out, "Time");
 	for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
 		COL(out, "Triggers");
 	}
@@ -1575,7 +1575,7 @@ kp_cmd_measure_output_histogram(
 	for (dir = 0; dir < DIR_NUM; dir++) {
 		/* Output direction header */
 		SEP(out);
-		COL(out, "%s", dir_names[dir]);
+		COL(out, "%s, us", dir_names[dir]);
 		for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
 			COL(out, "0%*zu", CHAR_NUM, max_step_passes[ch][dir]);
 		}
