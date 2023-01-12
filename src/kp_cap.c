@@ -73,8 +73,9 @@ kp_cap_isr(void *arg)
 
 	/* If the capture is not aborted */
 	if (!kp_cap_aborted) {
+		uint32_t sr = kp_cap_timer->SR;
 		/* If both the capture and bounce times have expired */
-		if (kp_cap_timer->SR & TIM_SR_UIF) {
+		if (sr & TIM_SR_UIF) {
 			/* Disable the trigger */
 			LL_TIM_SetSlaveMode(kp_cap_timer,
 						LL_TIM_SLAVEMODE_DISABLED);
@@ -85,8 +86,7 @@ kp_cap_isr(void *arg)
 			/* Prepare to signal the capture is done */
 			done = true;
 		} else {
-			uint32_t ccif_mask = kp_cap_timer->SR &
-						kp_cap_ch_ccif_mask;
+			uint32_t ccif_mask = sr & kp_cap_ch_ccif_mask;
 			/* If all channels were captured (but may bounce) */
 			if (ccif_mask == kp_cap_ch_ccif_mask) {
 				/* Shorten the capture, if possible */
