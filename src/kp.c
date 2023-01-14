@@ -1330,9 +1330,9 @@ kp_cmd_measure_output_stats(
 		struct kp_cap_ch_res (*ch_res_list_list)[KP_CAP_CH_NUM],
 		size_t passes)
 {
-	bool timeout[KP_CAP_CH_NUM] = {0, };
-	bool overcapture[KP_CAP_CH_NUM] = {0, };
-	bool unknown[KP_CAP_CH_NUM] = {0, };
+	bool timeout[KP_CAP_CH_NUM][DIR_NUM] = {{0, }};
+	bool overcapture[KP_CAP_CH_NUM][DIR_NUM] = {{0, }};
+	bool unknown[KP_CAP_CH_NUM][DIR_NUM] = {{0, }};
 	const char *dir_names[DIR_NUM] = {"Up", "Down", "Both"};
 	const char *metric_names[] = {
 		"Triggers, %",
@@ -1342,6 +1342,7 @@ kp_cmd_measure_output_stats(
 	};
 	const size_t metric_num = ARRAY_SIZE(metric_names);
 	uint32_t metric_data[metric_num][KP_CAP_CH_NUM][DIR_NUM];
+	/* NOTE: Code below expects triggers to occupy index zero */
 	uint32_t (*triggers)[KP_CAP_CH_NUM][DIR_NUM] = &metric_data[0];
 	uint32_t (*min)[KP_CAP_CH_NUM][DIR_NUM] = &metric_data[1];
 	uint32_t (*max)[KP_CAP_CH_NUM][DIR_NUM] = &metric_data[2];
@@ -1368,18 +1369,24 @@ kp_cmd_measure_output_stats(
 	/* Find minimums and maximums */
 	for (pass = 0; pass < passes; pass++) {
 		for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
+			dir = (pass & 1) ^ start_top;
 			ch_res = &ch_res_list_list[pass][ch];
 			switch (ch_res->status) {
 			case KP_CAP_CH_STATUS_DISABLED:
 				break;
 			case KP_CAP_CH_STATUS_TIMEOUT:
-				timeout[ch] = true;
+				/* Got timeout for this direction */
+				timeout[ch][dir] = true;
+				/* Got timeout for either direction */
+				timeout[ch][2] = true;
 				break;
 			case KP_CAP_CH_STATUS_OVERCAPTURE:
-				overcapture[ch] = true;
+				/* Got overcapture for this direction */
+				overcapture[ch][dir] = true;
+				/* Got overcapture for either direction */
+				overcapture[ch][2] = true;
 				/* FALLTHROUGH */
 			case KP_CAP_CH_STATUS_OK:
-				dir = (pass & 1) ^ start_top;
 #define ADJ_MIN(_lvalue) (_lvalue = MIN(_lvalue, ch_res->value_us))
 #define ADJ_MAX(_lvalue) (_lvalue = MAX(_lvalue, ch_res->value_us))
 				/* Got trigger/value for this direction */
@@ -1396,7 +1403,10 @@ kp_cmd_measure_output_stats(
 #undef ADJ_MIN
 				break;
 			default:
-				unknown[ch] = true;
+				/* Got unknown status for this direction */
+				unknown[ch][dir] = true;
+				/* Got unknown status for either direction */
+				unknown[ch][2] = true;
 				break;
 			}
 		}
@@ -1438,14 +1448,17 @@ kp_cmd_measure_output_stats(
 			COL(out, "%s", dir_names[dir]);
 			for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
 				if (kp_cap_ch_conf_list[ch].capture) {
-					if (!got_value[ch][dir]) {
-						COL(out, "!");
-						continue;
-					}
-					COL(out, "%s%s%s%u",
-					    overcapture[ch] ? "+" : "",
-					    unknown[ch] ? "?" : "",
-					    timeout[ch] ? "!" : "",
+					COL(out,
+					    /*
+					     * If it's the trigger percentage
+					     * (at metric index zero),
+					     * or we have measured values
+					     */
+					    (!metric || got_value[ch][dir])
+						    ? "%s%s%s%u" : "%s%s%s",
+					    overcapture[ch][dir] ? "+" : "",
+					    unknown[ch][dir] ? "?" : "",
+					    timeout[ch][dir] ? "!" : "",
 					    metric_data[metric][ch][dir]);
 				}
 			}
