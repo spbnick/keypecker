@@ -1528,9 +1528,6 @@ kp_cmd_measure_output_histogram(
 	for (pass = 0; pass < passes; pass++) {
 		dir = (pass & 1) ^ start_top;
 		for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
-			if (!kp_cap_ch_conf_list[ch].capture) {
-				continue;
-			}
 			ch_res = &ch_res_list_list[pass][ch];
 			if (ch_res->status != KP_CAP_CH_STATUS_OK &&
 			    ch_res->status != KP_CAP_CH_STATUS_OVERCAPTURE) {
