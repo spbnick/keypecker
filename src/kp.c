@@ -1690,7 +1690,7 @@ static int
 kp_cmd_measure(const struct shell *shell, size_t argc, char **argv)
 {
 	/* Capture result list */
-	static struct kp_cap_ch_res ch_res_list_list[256][KP_CAP_CH_NUM];
+	static struct kp_cap_ch_res ch_res_list_list[1024][KP_CAP_CH_NUM];
 	/* Poll event indices */
 	const char *arg;
 	long passes;
