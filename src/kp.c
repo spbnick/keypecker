@@ -1523,7 +1523,7 @@ kp_cmd_measure_output_histogram(
 		}
 	}
 
-	/* Calculate histogram values */
+	/* Calculate histogram step values per channel */
 	step_size = (max - min) / STEP_NUM;
 	for (pass = 0; pass < passes; pass++) {
 		dir = (pass & 1) ^ start_top;
@@ -1544,7 +1544,7 @@ kp_cmd_measure_output_histogram(
 		}
 	}
 
-	/* Calculate histogram maximums per channel */
+	/* Calculate histogram maximums per channel per direction */
 	for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
 		for (dir = 0; dir < DIR_NUM; dir++) {
 			for (step_idx = 0; step_idx < STEP_NUM; step_idx++) {
@@ -1556,7 +1556,7 @@ kp_cmd_measure_output_histogram(
 		}
 	}
 
-	/* Scale histogram down to characters */
+	/* Scale histograms down to characters */
 	for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
 		for (dir = 0; dir < DIR_NUM; dir++) {
 			for (step_idx = 0; step_idx < STEP_NUM; step_idx++) {
