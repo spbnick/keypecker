@@ -23,7 +23,6 @@
 #include <zephyr/drivers/clock_control/stm32_clock_control.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/uart.h>
-#include <zephyr/usb/usb_device.h>
 #include <zephyr/shell/shell.h>
 
 /* Devicetree node identifier for the GPIO port */
@@ -1934,29 +1933,15 @@ void
 main(void)
 {
 	const struct device *dev;
-	uint32_t dtr = 0;
 	size_t i;
 
 	/* Initialize the global state of "measure" command output */
 	kp_cmd_measure_output_setup();
 
-	/* Initialize USB */
-	if (usb_enable(NULL)) {
-		return;
-	}
-
 	/* Check shell UART is ready */
 	dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_shell_uart));
 	if (!device_is_ready(dev)) {
 		return;
-	}
-
-	/*
-	 * Wait for DTR on shell UART
-	 */
-	while (!dtr) {
-		uart_line_ctrl_get(dev, UART_LINE_CTRL_DTR, &dtr);
-		k_sleep(K_MSEC(100));
 	}
 
 	/* Initialize the shell extensions */
