@@ -35,10 +35,65 @@ extern "C" {
 /** Maximum number of characters in a user's channel name */
 #define KP_CAP_CH_NAME_MAX_LEN	15
 
+/** Capture direction (bitmap) */
+enum kp_cap_dir {
+	/** No capture */
+	KP_CAP_DIR_NONE	= 0,
+	/** Capture on the way up only */
+	KP_CAP_DIR_UP,
+	/** Capture on the way down only */
+	KP_CAP_DIR_DOWN,
+	/** Capture both ways */
+	KP_CAP_DIR_BOTH
+};
+
+/**
+ * Check if a capture direction is valid.
+ *
+ * @param dir	The direction to check.
+ *
+ * @return True if the direction is valid, false otherwise.
+ */
+static inline bool
+kp_cap_dir_is_valid(enum kp_cap_dir dir)
+{
+	return (dir & ~KP_CAP_DIR_BOTH) == 0;
+}
+
+/**
+ * Convert a string to a capture direction (regardless of case).
+ *
+ * @param str	The string to convert.
+ * @param pdir	Location for the converted direction (if valid).
+ * 		Can be NULL to discard the converted direction.
+ *
+ * @return True if the string was valid and the direction was output,
+ *         False, if the string was invalid and the direction was not output.
+ */
+extern bool kp_cap_dir_from_str(const char *str, enum kp_cap_dir *pdir);
+
+/**
+ * Convert a capture direction to a lower-case string.
+ *
+ * @param dir	The direction to convert.
+ *
+ * @return The string representing the direction.
+ */
+extern const char *kp_cap_dir_to_lcstr(enum kp_cap_dir dir);
+
+/**
+ * Convert a capture direction to a capitalized string.
+ *
+ * @param dir	The direction to convert.
+ *
+ * @return The string representing the direction.
+ */
+extern const char *kp_cap_dir_to_cpstr(enum kp_cap_dir dir);
+
 /** Capture channel configuration */
 struct kp_cap_ch_conf {
-	/** True if the channel should be captured */
-	bool capture;
+	/** The movement directions to capture in (bitmap) */
+	enum kp_cap_dir dir;
 	/**
 	 * True if the capture should happen on rising edges.
 	 * False if it should happen on falling edges.
@@ -51,7 +106,7 @@ struct kp_cap_ch_conf {
 
 /** Channel capture status */
 enum kp_cap_ch_status {
-	/** Capture not enabled */
+	/** Capture not enabled (for this direction) */
 	KP_CAP_CH_STATUS_DISABLED = 0,
 	/** Capture timed out */
 	KP_CAP_CH_STATUS_TIMEOUT,
@@ -128,6 +183,7 @@ extern bool kp_cap_is_initialized(void);
  * 			Any channels above this number won't be captured.
  * 			Any configurations above KP_CAP_CH_NUM will be
  * 			ignored.
+ * @param dir		The movement direction the capture is happening in.
  * @param timeout_us	The maximum time to wait for all channels to be
  * 			captured, microseconds. Must not be greater than
  * 			KP_CAP_TIME_MAX_US - bounce_us.
@@ -136,8 +192,8 @@ extern bool kp_cap_is_initialized(void);
  * 			KP_CAP_TIME_MAX_US - timeout_us.
  */
 extern void kp_cap_start(const struct kp_cap_ch_conf *ch_conf_list,
-			 size_t ch_conf_num, uint32_t timeout_us,
-			 uint32_t bounce_us);
+			 size_t ch_conf_num, enum kp_cap_dir dir,
+			 uint32_t timeout_us, uint32_t bounce_us);
 
 
 /**

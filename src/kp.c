@@ -394,7 +394,9 @@ static uint32_t kp_cap_timeout_us = 1000000;
 /** Bounce time, us */
 static uint32_t kp_cap_bounce_us = 50000;
 
-/** Execute the "set ch <idx> on/off [rising/falling [<name>]]" command */
+/** Execute the
+ * "set ch <idx> none/up/down/both [rising/falling [<name>]]"
+ * command */
 static int
 kp_cmd_set_ch(const struct shell *shell, size_t argc, char **argv)
 {
@@ -420,18 +422,14 @@ kp_cmd_set_ch(const struct shell *shell, size_t argc, char **argv)
 	/* Read current state */
 	conf = kp_cap_ch_conf_list[idx];
 
-	/* Parse capture status, if specified */
+	/* Parse capture direction, if specified */
 	if (argc >= 3) {
 		arg = argv[2];
-		if (kp_strcasecmp(arg, "on") == 0) {
-			conf.capture = true;
-		} else if (kp_strcasecmp(arg, "off") == 0) {
-			conf.capture = false;
-		} else {
+		if (!kp_cap_dir_from_str(arg, &conf.dir)) {
 			shell_error(
 				shell,
-				"Invalid capture status "
-				"(on/off expected): %s",
+				"Invalid capture direction "
+				"(none/up/down/both expected): %s",
 				arg
 			);
 			return 1;
@@ -539,7 +537,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(set_subcmds,
 			kp_cmd_set_bottom),
 	SHELL_CMD_ARG(ch, NULL,
 			"Set channel configuration: "
-			"<idx> on/off [rising/falling [<name>]]",
+			"<idx> none/up/down/both [rising/falling [<name>]]",
 			kp_cmd_set_ch, 3, 2),
 	SHELL_CMD_ARG(timeout, NULL,
 			"Set capture timeout: <us>",
@@ -629,7 +627,7 @@ kp_cmd_get_ch(const struct shell *shell, size_t argc, char **argv)
 	/* Output channel configuration */
 	conf = &kp_cap_ch_conf_list[idx];
 	shell_print(shell, "%s %s %s",
-			(conf->capture ? "on" : "off"),
+			kp_cap_dir_to_lcstr(conf->dir),
 			(conf->rising ? "rising" : "falling"),
 			conf->name);
 	return 0;
@@ -665,7 +663,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(get_subcmds,
 			kp_cmd_get_bottom),
 	SHELL_CMD_ARG(ch, NULL,
 			"Get channel configuration: "
-			"<idx> -> on/off rising/falling <name>",
+			"<idx> -> none/up/down/both rising/falling <name>",
 			kp_cmd_get_ch, 2, 0),
 	SHELL_CMD(timeout, NULL,
 			"Get capture timeout, us",
@@ -694,6 +692,9 @@ enum kp_sample_rc {
  *
  * @param target	The absolute actuator position to move to.
  * 			If invalid, no movement will be done.
+ * @param dir		The capture direction.
+ * 			If KP_CAP_DIR_NONE, no capture will be done, or waited
+ * 			for, nor any results will be output.
  * @param ch_res_list	Location for channel capture results.
  * 			Can be NULL, if ch_num is zero.
  * @param ch_num	Number of channels to capture (and to output into the
@@ -705,7 +706,8 @@ enum kp_sample_rc {
  * @return Result code.
  */
 static enum kp_sample_rc
-kp_sample(int32_t target, struct kp_cap_ch_res *ch_res_list, size_t ch_num)
+kp_sample(int32_t target, enum kp_cap_dir dir,
+		struct kp_cap_ch_res *ch_res_list, size_t ch_num)
 {
 	/* Poll event indices */
 	enum {
@@ -718,7 +720,7 @@ kp_sample(int32_t target, struct kp_cap_ch_res *ch_res_list, size_t ch_num)
 	enum kp_act_move_rc move_rc = KP_ACT_MOVE_RC_OK;
 	enum kp_cap_rc cap_rc = KP_CAP_RC_OK;
 	bool moving = kp_act_pos_is_valid(target);
-	bool capturing = ch_num > 0;
+	bool capturing = ch_num > 0 && dir;
 	bool moved = false;
 	bool captured = false;
 	enum kp_input_msg msg;
@@ -734,7 +736,7 @@ kp_sample(int32_t target, struct kp_cap_ch_res *ch_res_list, size_t ch_num)
 	/* Start the capture, if requested */
 	if (capturing) {
 		kp_cap_start(kp_cap_ch_conf_list,
-				ARRAY_SIZE(kp_cap_ch_conf_list),
+				ARRAY_SIZE(kp_cap_ch_conf_list), dir,
 				kp_cap_timeout_us, kp_cap_bounce_us);
 	} else {
 		events[EVENT_IDX_CAP_FINISH].type = K_POLL_TYPE_IGNORE;
@@ -833,7 +835,7 @@ kp_check(int32_t top, int32_t bottom, size_t passes, size_t *ptriggers)
 	}
 	start_top = abs(pos - kp_act_pos_top) < abs(pos - kp_act_pos_bottom);
 	rc = kp_sample(start_top ? kp_act_pos_top : kp_act_pos_bottom,
-		       NULL, 0);
+		       KP_CAP_DIR_NONE, NULL, 0);
 	if (rc != KP_SAMPLE_RC_OK) {
 		return rc;
 	}
@@ -843,6 +845,7 @@ kp_check(int32_t top, int32_t bottom, size_t passes, size_t *ptriggers)
 		/* Capture moving to the opposite boundary */
 		rc = kp_sample(
 			at_top ? bottom : top,
+			at_top ? KP_CAP_DIR_DOWN : KP_CAP_DIR_UP,
 			ch_res_list, ARRAY_SIZE(ch_res_list)
 		);
 		if (rc != KP_SAMPLE_RC_OK) {
@@ -1333,7 +1336,6 @@ kp_cmd_measure_output_stats(
 	bool timeout[KP_CAP_CH_NUM][DIR_NUM] = {{0, }};
 	bool overcapture[KP_CAP_CH_NUM][DIR_NUM] = {{0, }};
 	bool unknown[KP_CAP_CH_NUM][DIR_NUM] = {{0, }};
-	const char *dir_names[DIR_NUM] = {"Up", "Down", "Both"};
 	const char *metric_names[] = {
 		"Triggers, %",
 		"Time min, us",
@@ -1415,11 +1417,29 @@ kp_cmd_measure_output_stats(
 	/* Convert trigger counters to percentage */
 	for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
 		for (dir = 0; dir < DIR_NUM; dir++) {
+			/* Enabled counted direction */
+			enum kp_cap_dir enabled_dir =
+				(dir + 1) & kp_cap_ch_conf_list[ch].dir;
+			/* If the channel is disabled in counted directions */
+			if (!enabled_dir) {
+				/* Assign invalid percentage */
+				(*triggers)[ch][dir] = UINT32_MAX;
+				continue;
+			}
 			(*triggers)[ch][dir] =
 				(*triggers)[ch][dir] * 100 /
-				(dir > 1 ? passes
-					 : ((passes >> 1) +
-					    (passes & (dir == start_top))));
+				/* If both counted directions are enabled */
+				(enabled_dir == KP_CAP_DIR_BOTH
+					/* Take percentage of all passes */
+					? passes
+					/*
+					 * Else, take percentage of enabled
+					 * direction's passes
+					 */
+					: ((passes >> 1) +
+					   (passes &
+					    ((enabled_dir - 1) ==
+					     start_top))));
 		}
 	}
 
@@ -1437,7 +1457,7 @@ kp_cmd_measure_output_stats(
 		SEP(out);
 		COL(out, "Up/Down");
 		for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
-			if (kp_cap_ch_conf_list[ch].capture) {
+			if (kp_cap_ch_conf_list[ch].dir) {
 				COL(out, "%s", metric_names[metric]);
 			}
 		}
@@ -1445,9 +1465,19 @@ kp_cmd_measure_output_stats(
 		SEP(out);
 		/* Output data per direction */
 		for (dir = 0; dir < DIR_NUM; dir++) {
-			COL(out, "%s", dir_names[dir]);
+			COL(out, "%s", kp_cap_dir_to_cpstr(dir + 1));
 			for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
-				if (kp_cap_ch_conf_list[ch].capture) {
+				/* If the channel is enabled */
+				if (kp_cap_ch_conf_list[ch].dir) {
+					/*
+					 * If the channel is disabled for this
+					 * direction
+					 */
+					if (!(kp_cap_ch_conf_list[ch].dir &
+					      (dir + 1))) {
+						COL(out, "");
+						continue;
+					}
 					COL(out,
 					    /*
 					     * If it's the trigger percentage
@@ -1489,7 +1519,6 @@ kp_cmd_measure_output_histogram(
 {
 #define STEP_NUM 16
 #define CHAR_NUM (KP_CMD_MEASURE_COLN_WIDTH - 1)
-	const char *dir_names[DIR_NUM] = {"Up", "Down", "Both"};
 	uint32_t min, max;
 	uint32_t step_size;
 	size_t step_passes[KP_CAP_CH_NUM][DIR_NUM][STEP_NUM] = {{{0, }}};
@@ -1574,7 +1603,7 @@ kp_cmd_measure_output_histogram(
 	SEP(out);
 	COL(out, "Time");
 	for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
-		if (kp_cap_ch_conf_list[ch].capture) {
+		if (kp_cap_ch_conf_list[ch].dir) {
 			COL(out, "Triggers");
 		}
 	}
@@ -1584,9 +1613,14 @@ kp_cmd_measure_output_histogram(
 	for (dir = 0; dir < DIR_NUM; dir++) {
 		/* Output direction header */
 		SEP(out);
-		COL(out, "%s, us", dir_names[dir]);
+		COL(out, "%s, us", kp_cap_dir_to_cpstr(dir + 1));
 		for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
-			if (!kp_cap_ch_conf_list[ch].capture) {
+			/* If channel is not enabled in this direction */
+			if (!(kp_cap_ch_conf_list[ch].dir & (dir + 1))) {
+				/* If channel is enabled */
+				if (kp_cap_ch_conf_list[ch].dir) {
+					COL(out, "");
+				}
 				continue;
 			}
 			COL(out, "0%*zu", CHAR_NUM, max_step_passes[ch][dir]);
@@ -1604,7 +1638,12 @@ kp_cmd_measure_output_histogram(
 			}
 			/* Output histogram bars per channel */
 			for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
-				if (!kp_cap_ch_conf_list[ch].capture) {
+				/* If channel is not enabled in this direction */
+				if (!(kp_cap_ch_conf_list[ch].dir & (dir + 1))) {
+					/* If channel is enabled */
+					if (kp_cap_ch_conf_list[ch].dir) {
+						COL(out, "");
+					}
 					continue;
 				}
 				chars = (step_idx >= 0 && step_idx < STEP_NUM)
@@ -1686,7 +1725,7 @@ kp_cmd_measure(const struct shell *shell, size_t argc, char **argv)
 	/* Collect channel stats */
 	for (i = 0, enabled_ch_num = 0, named_ch_num = 0;
 		i < ARRAY_SIZE(kp_cap_ch_conf_list); i++) {
-		if (kp_cap_ch_conf_list[i].capture) {
+		if (kp_cap_ch_conf_list[i].dir) {
 			enabled_ch_num++;
 		}
 		if (kp_cap_ch_conf_list[i].name[0] != '\0') {
@@ -1749,7 +1788,7 @@ kp_cmd_measure(const struct shell *shell, size_t argc, char **argv)
 	start_top = abs(start_pos - kp_act_pos_top) <
 		abs(start_pos - kp_act_pos_bottom);
 	rc = kp_sample(start_top ? kp_act_pos_top : kp_act_pos_bottom,
-		       NULL, 0);
+		       KP_CAP_DIR_NONE, NULL, 0);
 	if (rc != KP_SAMPLE_RC_OK) {
 		goto finish;
 	}
@@ -1760,7 +1799,7 @@ kp_cmd_measure(const struct shell *shell, size_t argc, char **argv)
 	/* Output the channel index header */
 	COL(&out, "");
 	for (i = 0; i < ARRAY_SIZE(kp_cap_ch_conf_list); i++) {
-		if (kp_cap_ch_conf_list[i].capture) {
+		if (kp_cap_ch_conf_list[i].dir) {
 			COL(&out, "#%zu", i);
 		}
 	}
@@ -1770,7 +1809,7 @@ kp_cmd_measure(const struct shell *shell, size_t argc, char **argv)
 	if (named_ch_num != 0) {
 		COL(&out, "");
 		for (i = 0; i < ARRAY_SIZE(kp_cap_ch_conf_list); i++) {
-			if (kp_cap_ch_conf_list[i].capture) {
+			if (kp_cap_ch_conf_list[i].dir) {
 				COL(&out, "%s", kp_cap_ch_conf_list[i].name);
 			}
 		}
@@ -1781,7 +1820,7 @@ kp_cmd_measure(const struct shell *shell, size_t argc, char **argv)
 	SEP(&out);
 	COL(&out, "Up/Down");
 	for (i = 0; i < ARRAY_SIZE(kp_cap_ch_conf_list); i++) {
-		if (kp_cap_ch_conf_list[i].capture) {
+		if (kp_cap_ch_conf_list[i].dir) {
 			COL(&out, "Time, us");
 		}
 	}
@@ -1795,6 +1834,7 @@ kp_cmd_measure(const struct shell *shell, size_t argc, char **argv)
 		/* Capture moving to the opposite boundary */
 		rc = kp_sample(
 			at_top ? kp_act_pos_bottom : kp_act_pos_top,
+			at_top ? KP_CAP_DIR_DOWN : KP_CAP_DIR_UP,
 			ch_res_list_list[pass],
 			ARRAY_SIZE(ch_res_list_list[pass])
 		);
@@ -1804,9 +1844,13 @@ kp_cmd_measure(const struct shell *shell, size_t argc, char **argv)
 
 		COL(&out, at_top ? "Down" : "Up");
 		for (i = 0; i < ARRAY_SIZE(ch_res_list_list[pass]); i++) {
+			if (!kp_cap_ch_conf_list[i].dir) {
+				continue;
+			}
 			ch_res = &ch_res_list_list[pass][i];
 			switch (ch_res->status) {
 			case KP_CAP_CH_STATUS_DISABLED:
+				COL(&out, "");
 				break;
 			case KP_CAP_CH_STATUS_TIMEOUT:
 				COL(&out, "!");
@@ -1936,7 +1980,7 @@ main(void)
 	 */
 	for (i = 0; i < ARRAY_SIZE(kp_cap_ch_conf_list); i++) {
 		kp_cap_ch_conf_list[i] = (struct kp_cap_ch_conf){
-			.capture = false,
+			.dir = KP_CAP_DIR_NONE,
 			.rising = true,
 			.name = {0},
 		};

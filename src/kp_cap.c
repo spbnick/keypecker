@@ -9,6 +9,7 @@
  */
 
 #include "kp_cap.h"
+#include "kp_misc.h"
 #include <string.h>
 
 /** Masks for the channels available for capture */
@@ -116,8 +117,8 @@ kp_cap_isr(void *arg)
 
 void
 kp_cap_start(const struct kp_cap_ch_conf *ch_conf_list,
-		size_t ch_conf_num, uint32_t timeout_us,
-		uint32_t bounce_us)
+		size_t ch_conf_num, enum kp_cap_dir dir,
+		uint32_t timeout_us, uint32_t bounce_us)
 {
 	size_t i;
 	uint32_t ch_mask;
@@ -125,6 +126,7 @@ kp_cap_start(const struct kp_cap_ch_conf *ch_conf_list,
 
 	assert(kp_cap_is_initialized());
 	assert(ch_conf_list != NULL || ch_conf_num == 0);
+	assert(kp_cap_dir_is_valid(dir));
 	assert(timeout_us + bounce_us <= KP_CAP_TIME_MAX_US);
 
 	/* Wait for the capture to be available */
@@ -139,8 +141,8 @@ kp_cap_start(const struct kp_cap_ch_conf *ch_conf_list,
 	/* For each channel */
 	for (i = 0; i < KP_CAP_CH_NUM; i++) {
 		ch_mask = kp_cap_ch_mask_list[i];
-		/* If the channel has capture enabled */
-		if (i < ch_conf_num && ch_conf_list[i].capture) {
+		/* If the channel's capture is enabled */
+		if (i < ch_conf_num && (ch_conf_list[i].dir & dir)) {
 			/* Configure and enable the capture */
 			kp_cap_ch_ccif_mask |= kp_cap_ch_ccif_mask_list[i];
 			LL_TIM_IC_Config(
@@ -305,6 +307,63 @@ kp_cap_finish(struct kp_cap_ch_res *ch_res_list,
 	k_sem_give(&kp_cap_available);
 
 	return KP_CAP_RC_OK;
+}
+
+bool
+kp_cap_dir_from_str(const char *str, enum kp_cap_dir *pdir)
+{
+	enum kp_cap_dir dir;
+	assert(str != NULL);
+
+	if (kp_strcasecmp(str, "none") == 0) {
+		dir = KP_CAP_DIR_NONE;
+	} else if (kp_strcasecmp(str, "up") == 0) {
+		dir = KP_CAP_DIR_UP;
+	} else if (kp_strcasecmp(str, "down") == 0) {
+		dir = KP_CAP_DIR_DOWN;
+	} else if (kp_strcasecmp(str, "both") == 0) {
+		dir = KP_CAP_DIR_BOTH;
+	} else {
+		return false;
+	}
+
+	if (pdir != NULL) {
+		*pdir = dir;
+	}
+
+	return true;
+}
+
+const char *
+kp_cap_dir_to_lcstr(enum kp_cap_dir dir)
+{
+	static const char *str_list[] = {
+#define STATUS(_token, _lc_token) [KP_CAP_DIR_##_token] = #_lc_token
+		STATUS(NONE, none),
+		STATUS(UP, up),
+		STATUS(DOWN, down),
+		STATUS(BOTH, both),
+#undef STATUS
+	};
+	const char *str = (dir >= 0 && dir < ARRAY_SIZE(str_list))
+		? str_list[dir] : NULL;
+	return str == NULL ? "unknown" : str;
+}
+
+const char *
+kp_cap_dir_to_cpstr(enum kp_cap_dir dir)
+{
+	static const char *str_list[] = {
+#define STATUS(_token, _cp_token) [KP_CAP_DIR_##_token] = #_cp_token
+		STATUS(NONE, None),
+		STATUS(UP, Up),
+		STATUS(DOWN, Down),
+		STATUS(BOTH, Both),
+#undef STATUS
+	};
+	const char *str = (dir >= 0 && dir < ARRAY_SIZE(str_list))
+		? str_list[dir] : NULL;
+	return str == NULL ? "unknown" : str;
 }
 
 const char *
