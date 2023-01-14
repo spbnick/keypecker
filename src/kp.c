@@ -1553,6 +1553,9 @@ kp_cmd_measure_output_histogram(
 
 	/* Calculate histogram step values per channel */
 	step_size = (max - min) / STEP_NUM;
+	if (step_size == 0) {
+		step_size = KP_CAP_RES_US;
+	}
 	for (pass = 0; pass < passes; pass++) {
 		dir = (pass & 1) ^ start_top;
 		for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
