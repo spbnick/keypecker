@@ -1660,7 +1660,6 @@ kp_cmd_measure(const struct shell *shell, size_t argc, char **argv)
 	size_t pass;
 	enum kp_sample_rc rc = KP_CAP_RC_OK;
 	int32_t start_pos;
-	int32_t pos;
 	/* True if we started at the top (and went down), false otherwise */
 	bool start_top;
 
@@ -1736,14 +1735,14 @@ kp_cmd_measure(const struct shell *shell, size_t argc, char **argv)
 
 	/* Remember the start position */
 	start_pos = kp_act_locate();
-
-	/* Move to the closest boundary without capturing */
-	pos = kp_act_locate();
-	if (!kp_act_pos_is_valid(pos)) {
+	if (!kp_act_pos_is_valid(start_pos)) {
 		rc = KP_SAMPLE_RC_OFF;
 		goto finish;
 	}
-	start_top = abs(pos - kp_act_pos_top) < abs(pos - kp_act_pos_bottom);
+
+	/* Move to the closest boundary without capturing */
+	start_top = abs(start_pos - kp_act_pos_top) <
+		abs(start_pos - kp_act_pos_bottom);
 	rc = kp_sample(start_top ? kp_act_pos_top : kp_act_pos_bottom,
 		       NULL, 0);
 	if (rc != KP_SAMPLE_RC_OK) {
