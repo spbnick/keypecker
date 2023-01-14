@@ -815,34 +815,34 @@ kp_check(int32_t top, int32_t bottom, size_t passes, size_t *ptriggers)
 	struct kp_cap_ch_res ch_res_list[ARRAY_SIZE(kp_cap_ch_conf_list)];
 	enum kp_sample_rc rc = KP_CAP_RC_OK;
 	int32_t pos;
+	bool start_top;
+	size_t pass;
 	size_t triggers = 0;
 	size_t i;
 	size_t captured_channels;
 	size_t triggered_channels;
 
-	while (passes > 0) {
-		pos = kp_act_locate();
-		if (!kp_act_pos_is_valid(pos)) {
-			return KP_SAMPLE_RC_OFF;
-		}
+	if (passes == 0) {
+		goto finish;
+	}
 
-		/* If we're not at a boundary */
-		if (pos != top && pos != bottom) {
-			/* Move to the closest boundary without capturing */
-			rc = kp_sample(
-				(abs(pos - top) < abs(pos - bottom))
-					? top : bottom,
-				NULL, 0
-			);
-			if (rc != KP_SAMPLE_RC_OK) {
-				return rc;
-			}
-			continue;
-		}
+	/* Move to the closest boundary without capturing */
+	pos = kp_act_locate();
+	if (!kp_act_pos_is_valid(pos)) {
+		return KP_SAMPLE_RC_OFF;
+	}
+	start_top = abs(pos - kp_act_pos_top) < abs(pos - kp_act_pos_bottom);
+	rc = kp_sample(start_top ? kp_act_pos_top : kp_act_pos_bottom,
+		       NULL, 0);
+	if (rc != KP_SAMPLE_RC_OK) {
+		return rc;
+	}
 
+	for (pass = 0; pass < passes; pass++) {
+		bool at_top = (pass & 1) ^ start_top;
 		/* Capture moving to the opposite boundary */
 		rc = kp_sample(
-			(pos == top) ? bottom : top,
+			at_top ? bottom : top,
 			ch_res_list, ARRAY_SIZE(ch_res_list)
 		);
 		if (rc != KP_SAMPLE_RC_OK) {
@@ -864,9 +864,9 @@ kp_check(int32_t top, int32_t bottom, size_t passes, size_t *ptriggers)
 				triggered_channels == captured_channels) {
 			triggers++;
 		}
-
-		passes--;
 	}
+
+finish:
 
 	if (ptriggers != NULL) {
 		*ptriggers = triggers;
