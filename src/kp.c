@@ -1560,6 +1560,9 @@ kp_cmd_measure_output_histogram(
 	for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
 		for (dir = 0; dir < DIR_NUM; dir++) {
 			for (step_idx = 0; step_idx < STEP_NUM; step_idx++) {
+				if (max_step_passes[ch][dir] == 0) {
+					continue;
+				}
 				step_passes[ch][dir][step_idx] =
 					step_passes[ch][dir][step_idx] *
 					CHAR_NUM / max_step_passes[ch][dir];
