@@ -12,11 +12,11 @@
 #include "kp_act.h"
 #include "kp_shell.h"
 #include "kp_input.h"
+#include "kp_misc.h"
 #include <stm32_ll_tim.h>
 #include <assert.h>
 #include <stdlib.h>
 #include <sys/types.h>
-#include <strings.h>
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
 #include <zephyr/logging/log.h>
@@ -393,12 +393,6 @@ static uint32_t kp_cap_timeout_us = 1000000;
 
 /** Bounce time, us */
 static uint32_t kp_cap_bounce_us = 50000;
-
-static inline int
-kp_strcasecmp(const char *a, const char *b)
-{
-	return strncasecmp(a, b, MAX(strlen(a), strlen(b)));
-}
 
 /** Execute the "set ch <idx> on/off [rising/falling [<name>]]" command */
 static int
