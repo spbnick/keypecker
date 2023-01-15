@@ -164,28 +164,38 @@ kp_cap_start(const struct kp_cap_ch_conf *ch_conf_list,
 	/* Reset abort flag */
 	kp_cap_aborted = false;
 
-	/* Clear all the overcapture/interrupt flags */
-	kp_cap_timer->SR = 0;
-
-	/* Enable only the interrupts we need */
-	/* NOTE: Assuming SR bits match DIER bits */
-	kp_cap_timer->DIER = kp_cap_ch_ccif_mask | TIM_SR_UIF;
-
 	/* Remember the number of ticks to wait for capture */
 	kp_cap_timeout_ticks = timeout_us / KP_CAP_RES_US;
 
 	/* Remember the number of ticks to wait for a channel to bounce */
 	kp_cap_bounce_ticks = bounce_us / KP_CAP_RES_US;
 
-	/* Set auto-reload register to the total timeout */
-	LL_TIM_SetAutoReload(kp_cap_timer,
-				kp_cap_timeout_ticks + kp_cap_bounce_ticks);
+	/* Clear all the overcapture/interrupt flags */
+	kp_cap_timer->SR = 0;
 
-	/* Setup the trigger to start (but not stop) counting */
-	LL_TIM_SetSlaveMode(kp_cap_timer, LL_TIM_SLAVEMODE_TRIGGER);
+	/* If at least one channel is enabled */
+	if (kp_cap_ch_ccif_mask) {
+		/* Enable only the interrupts we need */
+		/* NOTE: Assuming SR bits match DIER bits */
+		kp_cap_timer->DIER = kp_cap_ch_ccif_mask | TIM_SR_UIF;
+
+		/* Set auto-reload register to the total timeout */
+		LL_TIM_SetAutoReload(kp_cap_timer,
+				     kp_cap_timeout_ticks +
+				     kp_cap_bounce_ticks);
+
+		/* Setup the trigger to start (but not stop) counting */
+		LL_TIM_SetSlaveMode(kp_cap_timer, LL_TIM_SLAVEMODE_TRIGGER);
+	}
 
 	/* Unlock the interrupt state */
 	k_spin_unlock(&kp_cap_lock, key);
+
+	/* If no channels are enabled */
+	if (!kp_cap_ch_ccif_mask) {
+		/* Signal the capture is "done" */
+		k_sem_give(&kp_cap_done);
+	}
 }
 
 bool
