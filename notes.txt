@@ -568,3 +568,5 @@ Trigs, %             100             100
 Mean, us           11623           22750
 Mode, us           11623           22750
 
+TODO: Output channel legends at the end of a long output.
+TODO: Use TIM1 ETR input for triggering, and enable two more channels

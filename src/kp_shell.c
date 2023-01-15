@@ -66,7 +66,7 @@ kp_shell_thread_fn(void *p1, void *p2, void *p3)
 }
 
 /** The thread executing scheduled command handlers */
-K_THREAD_DEFINE(kp_shell_thread, 1024,
+K_THREAD_DEFINE(kp_shell_thread, 2048,
 		kp_shell_thread_fn, NULL, NULL, NULL,
 		-1, 0, -1);
 
