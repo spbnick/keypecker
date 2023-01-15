@@ -820,8 +820,21 @@ kp_check(int32_t top, int32_t bottom, size_t passes, size_t *ptriggers)
 	size_t pass;
 	size_t triggers = 0;
 	size_t i;
+	size_t enabled_channels;
 	size_t captured_channels;
 	size_t triggered_channels;
+
+	assert(kp_act_pos_is_valid(top));
+	assert(kp_act_pos_is_valid(bottom));
+
+	/* Count enabled channels */
+	for (i = 0, enabled_channels = 0;
+		i < ARRAY_SIZE(kp_cap_ch_conf_list); i++) {
+		if (kp_cap_ch_conf_list[i].dir) {
+			enabled_channels++;
+		}
+	}
+	assert(enabled_channels > 0);
 
 	if (passes == 0) {
 		goto finish;
