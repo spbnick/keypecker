@@ -818,6 +818,7 @@ kp_check(int32_t top, int32_t bottom, size_t passes, size_t *ptriggers)
 	int32_t pos;
 	bool start_top;
 	size_t pass;
+	size_t captured_pass;
 	size_t triggers = 0;
 	size_t i;
 	size_t enabled_channels;
@@ -852,7 +853,7 @@ kp_check(int32_t top, int32_t bottom, size_t passes, size_t *ptriggers)
 		return rc;
 	}
 
-	for (pass = 0; pass < passes; pass++) {
+	for (pass = 0, captured_pass = 0; captured_pass < passes; pass++) {
 		bool at_top = (pass & 1) ^ start_top;
 		/* Capture moving to the opposite boundary */
 		rc = kp_sample(
@@ -875,9 +876,11 @@ kp_check(int32_t top, int32_t bottom, size_t passes, size_t *ptriggers)
 				}
 			}
 		}
-		if (captured_channels > 0 &&
-				triggered_channels == captured_channels) {
-			triggers++;
+		if (captured_channels > 0) {
+			captured_pass++;
+			if (triggered_channels == captured_channels) {
+				triggers++;
+			}
 		}
 	}
 
