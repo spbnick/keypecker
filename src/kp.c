@@ -1374,13 +1374,16 @@ kp_cmd_measure_output_sep(struct kp_cmd_measure_output *out)
  *				elements.
  * @param passes		Number of passes (channel result lists).
  * 				Must be greater than one.
+ * @param verbose		True if the output should be verbose,
+ * 				false otherwise.
  */
 static void
 kp_cmd_measure_output_stats(
 		struct kp_cmd_measure_output *out,
 		bool start_top,
 		struct kp_cap_ch_res (*ch_res_list_list)[KP_CAP_CH_NUM],
-		size_t passes)
+		size_t passes,
+		bool verbose)
 {
 	bool timeout[KP_CAP_CH_NUM][DIR_NUM] = {{0, }};
 	bool overcapture[KP_CAP_CH_NUM][DIR_NUM] = {{0, }};
@@ -1504,7 +1507,7 @@ kp_cmd_measure_output_stats(
 	 * Output results per direction per metric per channel
 	 */
 	/* For each direction */
-	for (dir = 0; dir < DIR_NUM; dir++) {
+	for (dir = verbose ? 0 : 2; dir < DIR_NUM; dir++) {
 		/* Output direction header */
 		SEP(out);
 		COL(out, "%s", kp_cap_dir_to_cpstr(dir + 1));
@@ -1564,13 +1567,16 @@ kp_cmd_measure_output_stats(
  *				elements.
  * @param passes		Number of passes (channel result lists).
  * 				Must be greater than zero.
+ * @param verbose		True if the output should be verbose,
+ * 				false otherwise.
  */
 static void
 kp_cmd_measure_output_histogram(
 		struct kp_cmd_measure_output *out,
 		bool start_top,
 		struct kp_cap_ch_res (*ch_res_list_list)[KP_CAP_CH_NUM],
-		size_t passes)
+		size_t passes,
+		bool verbose)
 {
 #define STEP_NUM 16
 #define CHAR_NUM (KP_CMD_MEASURE_COLN_WIDTH - 1)
@@ -1667,8 +1673,11 @@ kp_cmd_measure_output_histogram(
 	}
 	NL(out);
 
-	/* Output histograms per direction */
-	for (dir = 0; dir < DIR_NUM; dir++) {
+	/*
+	 * Output histograms per direction
+	 */
+	/* For each direction */
+	for (dir = verbose ? 0 : 2; dir < DIR_NUM; dir++) {
 		/* Output direction header */
 		SEP(out);
 		COL(out, "%s, us", kp_cap_dir_to_cpstr(dir + 1));
@@ -1753,7 +1762,7 @@ kp_cmd_measure(const struct shell *shell, size_t argc, char **argv)
 	/* Poll event indices */
 	const char *arg;
 	long passes;
-	long verbosity;
+	bool verbose;
 	size_t i;
 	size_t enabled_ch_num;
 	size_t named_ch_num;
@@ -1819,16 +1828,20 @@ kp_cmd_measure(const struct shell *shell, size_t argc, char **argv)
 		}
 	}
 
-	/* Parse the verbosity level */
+	/* Parse the verbosity flag */
 	if (argc < 3) {
-		verbosity = 0;
+		verbose = false;
 	} else {
 		arg = argv[2];
-		if (!kp_parse_non_negative_number(arg, &verbosity) ||
-				verbosity > 2) {
+		if (kp_strcasecmp(arg, "verbose") == 0) {
+			verbose = true;
+		} else if (kp_strcasecmp(arg, "brief") == 0) {
+			verbose = false;
+		} else {
 			shell_error(
 				shell,
-				"Invalid verbosity (0-2 expected): %s",
+				"Invalid verbosity argument "
+				"(brief/verbose expected): %s",
 				arg
 			);
 			return 1;
@@ -1874,16 +1887,18 @@ kp_cmd_measure(const struct shell *shell, size_t argc, char **argv)
 		NL(&out);
 	}
 
-	/* Output timing header */
-	SEP(&out);
-	COL(&out, "Up/Down");
-	for (i = 0; i < ARRAY_SIZE(kp_cap_ch_conf_list); i++) {
-		if (kp_cap_ch_conf_list[i].dir) {
-			COL(&out, "Time, us");
+	/* Output timing header, if verbose or doing one pass only */
+	if (verbose || passes == 1) {
+		SEP(&out);
+		COL(&out, "Up/Down");
+		for (i = 0; i < ARRAY_SIZE(kp_cap_ch_conf_list); i++) {
+			if (kp_cap_ch_conf_list[i].dir) {
+				COL(&out, "Time, us");
+			}
 		}
+		NL(&out);
+		SEP(&out);
 	}
-	NL(&out);
-	SEP(&out);
 
 	/* Capture the requested number of passes */
 	for (pass = 0; pass < passes; pass++) {
@@ -1898,6 +1913,11 @@ kp_cmd_measure(const struct shell *shell, size_t argc, char **argv)
 		);
 		if (rc != KP_SAMPLE_RC_OK) {
 			goto finish;
+		}
+
+		/* Skip output if not verbose or doing one pass only */
+		if (!(verbose || passes == 1)) {
+			continue;
 		}
 
 		COL(&out, at_top ? "Down" : "Up");
@@ -1929,10 +1949,10 @@ kp_cmd_measure(const struct shell *shell, size_t argc, char **argv)
 
 	if (passes > 1) {
 		kp_cmd_measure_output_stats(
-			&out, start_top, ch_res_list_list, passes
+			&out, start_top, ch_res_list_list, passes, verbose
 		);
 		kp_cmd_measure_output_histogram(
-			&out, start_top, ch_res_list_list, passes
+			&out, start_top, ch_res_list_list, passes, verbose
 		);
 	}
 
@@ -1983,8 +2003,7 @@ finish:
 SHELL_CMD_ARG_REGISTER(measure, NULL,
 			"Measure timing on all enabled channels for "
 			"specified number of passes (default 1), and output "
-			"results with given level of verbosity "
-			"(0-2, default 0)",
+			"brief (default), or verbose results",
 			kp_cmd_measure, 1, 2);
 
 #define TIMER_NODE
