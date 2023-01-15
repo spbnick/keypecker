@@ -881,6 +881,8 @@ finish:
 static int
 kp_cmd_check(const struct shell *shell, size_t argc, char **argv)
 {
+	size_t i;
+	size_t enabled_channels;
 	int32_t start;
 	long passes;
 	size_t triggers;
@@ -897,6 +899,21 @@ kp_cmd_check(const struct shell *shell, size_t argc, char **argv)
 	}
 	if (!kp_act_pos_is_valid(kp_act_pos_bottom)) {
 		shell_error(shell, "Bottom position not set, aborting");
+		return 1;
+	}
+
+	/* Count enabled channels */
+	for (i = 0, enabled_channels = 0;
+		i < ARRAY_SIZE(kp_cap_ch_conf_list); i++) {
+		if (kp_cap_ch_conf_list[i].dir) {
+			enabled_channels++;
+		}
+	}
+
+	/* Check that at least one channel is enabled */
+	if (enabled_channels == 0) {
+		shell_error(shell, "No enabled channels, aborting");
+		shell_info(shell, "Use \"set ch\" command to enable");
 		return 1;
 	}
 
@@ -983,6 +1000,8 @@ kp_cmd_tighten(const struct shell *shell, size_t argc, char **argv)
 	const char *arg;
 	long steps;
 	long passes;
+	size_t i;
+	size_t enabled_channels;
 	int32_t start;
 	size_t triggers;
 	int32_t top = KP_ACT_POS_INVALID;
@@ -1004,6 +1023,21 @@ kp_cmd_tighten(const struct shell *shell, size_t argc, char **argv)
 	}
 	if (!kp_act_pos_is_valid(kp_act_pos_bottom)) {
 		shell_error(shell, "Bottom position not set, aborting");
+		return 1;
+	}
+
+	/* Count enabled channels */
+	for (i = 0, enabled_channels = 0;
+		i < ARRAY_SIZE(kp_cap_ch_conf_list); i++) {
+		if (kp_cap_ch_conf_list[i].dir) {
+			enabled_channels++;
+		}
+	}
+
+	/* Check that at least one channel is enabled */
+	if (enabled_channels == 0) {
+		shell_error(shell, "No enabled channels, aborting");
+		shell_info(shell, "Use \"set ch\" command to enable");
 		return 1;
 	}
 
