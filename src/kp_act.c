@@ -58,6 +58,12 @@ static K_SEM_DEFINE(kp_act_move_begin, 0, 1);
 /** The move target position, in steps */
 static int32_t kp_act_target;
 
+/** The timestamp of the last step in cycles */
+static uint32_t kp_act_move_last_cycles;
+
+/** True if the last step was in the positive direction, false otherwise */
+static bool kp_act_move_last_positive;
+
 /** The semaphore signaling a movement is done */
 static K_SEM_DEFINE(kp_act_move_done, 0, 1);
 
@@ -169,6 +175,7 @@ static K_TIMER_DEFINE(kp_act_move_timer, NULL, NULL);
 void
 kp_act_move_thread_fn(void *arg1, void *arg2, void *arg3)
 {
+	bool positive = false;
 	assert(kp_act_is_initialized());
 
 	/* While we can get the "begin" semaphore */
@@ -194,16 +201,19 @@ kp_act_move_thread_fn(void *arg1, void *arg2, void *arg3)
 					k_timer_stop(&kp_act_move_timer);
 					continue;
 				}
+				positive = kp_act_target > kp_act_pos;
 				gpio_pin_set(kp_act_gpio, kp_act_gpio_pin_dir,
-					     kp_act_pos > kp_act_target);
+					     !positive);
 			}
 			/* Raise */
 			KP_ACT_MOVE_TIMER_SYNC(stop);
 			gpio_pin_set(kp_act_gpio, kp_act_gpio_pin_step, 1);
+			kp_act_move_last_cycles = k_cycle_get_32();
+			kp_act_move_last_positive = positive;
 			/* Hold */
 			KP_ACT_MOVE_TIMER_SYNC(stop);
 			KP_ACT_WITH_LOCK {
-				if (kp_act_pos < kp_act_target) {
+				if (positive) {
 					kp_act_pos++;
 				} else {
 					kp_act_pos--;
@@ -230,6 +240,7 @@ kp_act_start_move(bool relative, int32_t steps, uint32_t speed)
 {
 	bool started = false;
 	uint32_t period_us;
+	k_timeout_t delay = K_NO_WAIT;
 	assert(relative || kp_act_pos_is_valid(steps));
 	assert(speed <= 100);
 	assert(kp_act_is_initialized());
@@ -252,13 +263,44 @@ kp_act_start_move(bool relative, int32_t steps, uint32_t speed)
 			kp_act_move_rc = KP_ACT_MOVE_RC_OK;
 			continue;
 		}
+
 		kp_act_move_aborted = false;
+
+		/* If our direction is different from the last step */
+		if ((kp_act_target > kp_act_pos) !=
+				kp_act_move_last_positive) {
+			/*
+			 * Minimum turn delay, microseconds.
+			 * The faster we move, the more time we need to absorb
+			 * the momentum.
+			 */
+			uint32_t turn_delay_us =
+				(KP_ACT_MOVE_TIMER_PERIOD_MIN_US +
+				 ((KP_ACT_MOVE_TIMER_PERIOD_MAX_US -
+				   KP_ACT_MOVE_TIMER_PERIOD_MIN_US) *
+				  speed) / 100) * 2;
+			/* Current time, cycles */
+			uint32_t now_cycles = k_cycle_get_32();
+			/* Microseconds from the last step */
+			uint32_t elapsed_us = k_cyc_to_us_floor32(
+				now_cycles > kp_act_move_last_cycles
+					? now_cycles - kp_act_move_last_cycles
+					/* Just always wait on overflow */
+					: 0
+			);
+			if (elapsed_us < turn_delay_us) {
+				/* Wait to absorb momentum before turning */
+				delay = K_USEC(turn_delay_us - elapsed_us);
+			}
+		}
+
+		/* Shorter period for faster movement */
 		period_us = KP_ACT_MOVE_TIMER_PERIOD_MAX_US -
 			((KP_ACT_MOVE_TIMER_PERIOD_MAX_US -
 			  KP_ACT_MOVE_TIMER_PERIOD_MIN_US) *
 			 speed) / 100;
-		k_timer_start(&kp_act_move_timer,
-				K_NO_WAIT, K_USEC(period_us));
+
+		k_timer_start(&kp_act_move_timer, delay, K_USEC(period_us));
 		started = true;
 	}
 
@@ -333,6 +375,8 @@ kp_act_init(const struct device *gpio,
 
 	/* Move state */
 	kp_act_target = 0;
+	kp_act_move_last_cycles = 0;
+	kp_act_move_last_positive = false;
 
 	/* General state */
 	kp_act_pos = 0;
