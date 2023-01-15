@@ -1386,10 +1386,10 @@ kp_cmd_measure_output_stats(
 	bool overcapture[KP_CAP_CH_NUM][DIR_NUM] = {{0, }};
 	bool unknown[KP_CAP_CH_NUM][DIR_NUM] = {{0, }};
 	const char *metric_names[] = {
-		"Triggers, %",
-		"Time min, us",
-		"Time max, us",
-		"Time mean, us"
+		"Trigs, %",
+		"Min, us",
+		"Max, us",
+		"Mean, us"
 	};
 	const size_t metric_num = ARRAY_SIZE(metric_names);
 	uint32_t metric_data[metric_num][KP_CAP_CH_NUM][DIR_NUM];
@@ -1500,46 +1500,52 @@ kp_cmd_measure_output_stats(
 		}
 	}
 
-	/* Output results for each metric */
-	for (metric = 0; metric < metric_num; metric++) {
-		/* Output metric header */
+	/*
+	 * Output results per direction per metric per channel
+	 */
+	/* For each direction */
+	for (dir = 0; dir < DIR_NUM; dir++) {
+		/* Output direction header */
 		SEP(out);
-		COL(out, "Up/Down");
+		COL(out, "%s", kp_cap_dir_to_cpstr(dir + 1));
 		for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
 			if (kp_cap_ch_conf_list[ch].dir) {
-				COL(out, "%s", metric_names[metric]);
+				COL(out, "Value");
 			}
 		}
 		NL(out);
 		SEP(out);
-		/* Output data per direction */
-		for (dir = 0; dir < DIR_NUM; dir++) {
-			COL(out, "%s", kp_cap_dir_to_cpstr(dir + 1));
+		/* For each metric */
+		for (metric = 0; metric < metric_num; metric++) {
+			/* Output metric name */
+			COL(out, "%s", metric_names[metric]);
+			/* For each channel */
 			for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
-				/* If the channel is enabled */
-				if (kp_cap_ch_conf_list[ch].dir) {
-					/*
-					 * If the channel is disabled for this
-					 * direction
-					 */
-					if (!(kp_cap_ch_conf_list[ch].dir &
-					      (dir + 1))) {
+				/*
+				 * If the channel is disabled for this
+				 * direction
+				 */
+				if (!(kp_cap_ch_conf_list[ch].dir &
+				      (dir + 1))) {
+					/* If the channel is enabled */
+					if (kp_cap_ch_conf_list[ch].dir) {
 						COL(out, "");
-						continue;
 					}
-					COL(out,
-					    /*
-					     * If it's the trigger percentage
-					     * (at metric index zero),
-					     * or we have measured values
-					     */
-					    (!metric || got_value[ch][dir])
-						    ? "%s%s%s%u" : "%s%s%s",
-					    overcapture[ch][dir] ? "+" : "",
-					    unknown[ch][dir] ? "?" : "",
-					    timeout[ch][dir] ? "!" : "",
-					    metric_data[metric][ch][dir]);
+					continue;
 				}
+				/* Output metric value and/or flags */
+				COL(out,
+				    /*
+				     * If it's the trigger percentage
+				     * (at metric index zero),
+				     * or we have measured values
+				     */
+				    (!metric || got_value[ch][dir])
+					    ? "%s%s%s%u" : "%s%s%s",
+				    overcapture[ch][dir] ? "+" : "",
+				    unknown[ch][dir] ? "?" : "",
+				    timeout[ch][dir] ? "!" : "",
+				    metric_data[metric][ch][dir]);
 			}
 			NL(out);
 		}
