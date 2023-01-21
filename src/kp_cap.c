@@ -58,6 +58,20 @@ static volatile bool kp_cap_aborted;
 /** The semaphore signaling a capture is done */
 static K_SEM_DEFINE(kp_cap_done, 0, 1);
 
+/**
+ * The GPIO port to use for capture interrupt debugging for each channel.
+ * Set to NULL if none. Must be configured if specified.
+ */
+static const struct device *kp_cap_ch_dbg_gpio_list[KP_CAP_CH_NUM];
+
+/**
+ * The GPIO pin to use for capture interrupt debugging for each channel.
+ * Set high on entrance to the corresponding interrupt, set low on exit.
+ * Only valid if the corresponding out_gpio_list element is not NULL.
+ * Must be configured.
+ */
+static gpio_pin_t kp_cap_ch_dbg_pin_list[KP_CAP_CH_NUM];
+
 /** The interrupt state spinlock */
 /** Only needs to be held if kp_cap_available is taken */
 static struct k_spinlock kp_cap_lock = {};
@@ -88,6 +102,22 @@ kp_cap_isr(void *arg)
 			done = true;
 		} else {
 			uint32_t ccif_mask = sr & kp_cap_ch_ccif_mask;
+			uint32_t new_ccif_mask = ccif_mask & kp_cap_timer->DIER;
+			size_t i;
+
+			/* Raise debugging GPIO pins, if specified */
+			for (i = 0; i < KP_CAP_CH_NUM; i++) {
+				if (kp_cap_ch_dbg_gpio_list[i] != NULL &&
+				    (kp_cap_ch_ccif_mask_list[i] &
+					new_ccif_mask)) {
+					gpio_pin_set(
+						kp_cap_ch_dbg_gpio_list[i],
+						kp_cap_ch_dbg_pin_list[i],
+						1
+					);
+				}
+			}
+
 			/* If all channels were captured (but may bounce) */
 			if (ccif_mask == kp_cap_ch_ccif_mask) {
 				/* Shorten the capture, if possible */
@@ -102,6 +132,7 @@ kp_cap_isr(void *arg)
 				}
 				LL_TIM_EnableCounter(kp_cap_timer);
 			}
+
 			/* Disable the interrupts we've processed */
 			kp_cap_timer->DIER &= ~ccif_mask;
 		}
@@ -158,9 +189,14 @@ kp_cap_start(const struct kp_cap_ch_conf *ch_conf_list,
 					: LL_TIM_IC_POLARITY_FALLING)
 			);
 			LL_TIM_CC_EnableChannel(kp_cap_timer, ch_mask);
+			/* Record debug GPIO device and pin, if any */
+			kp_cap_ch_dbg_gpio_list[i] = ch_conf->dbg_gpio;
+			kp_cap_ch_dbg_pin_list[i] = ch_conf->dbg_pin;
 		} else {
 			/* Disable the capture */
 			LL_TIM_CC_DisableChannel(kp_cap_timer, ch_mask);
+			/* Clear debug GPIO device */
+			kp_cap_ch_dbg_gpio_list[i] = NULL;
 		}
 	}
 
@@ -313,6 +349,12 @@ kp_cap_finish(struct kp_cap_ch_res *ch_res_list,
 		if (i < ch_res_num) {
 			ch_res_list[i].status = status;
 			ch_res_list[i].value_us = value_us;
+		}
+
+		/* Lower the debugging pin, if any */
+		if (kp_cap_ch_dbg_gpio_list[i] != NULL) {
+			gpio_pin_set(kp_cap_ch_dbg_gpio_list[i],
+					kp_cap_ch_dbg_pin_list[i], 0);
 		}
 	}
 

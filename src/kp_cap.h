@@ -11,6 +11,7 @@
 #ifndef KP_CAP_H_
 #define KP_CAP_H_
 
+#include <zephyr/drivers/gpio.h>
 #include <zephyr/kernel.h>
 #include <stm32_ll_tim.h>
 #include <stdbool.h>
@@ -102,6 +103,19 @@ struct kp_cap_ch_conf {
 
 	/** User's channel name */
 	char name[KP_CAP_CH_NAME_MAX_LEN + 1];
+
+	/**
+	 * The GPIO port to use for capture interrupt debugging,
+	 * or NULL for none. Must be configured if specified.
+	 */
+	const struct device *dbg_gpio;
+
+	/**
+	 * The GPIO pin to use for capture interrupt debugging.
+	 * Set high on entrance to the corresponding interrupt, set low on
+	 * exit. Only valid if out_gpio is not NULL. Must be configured.
+	 */
+	gpio_pin_t dbg_pin;
 };
 
 /** Channel capture status */
