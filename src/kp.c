@@ -27,12 +27,17 @@
 
 /* Devicetree node identifier for the actuator's GPIO port */
 #define KP_ACT_GPIO_NODE DT_NODELABEL(gpiob)
+/* Devicetree node identifier for the debug GPIO port */
+#define KP_DBG_GPIO_NODE DT_NODELABEL(gpioa)
 
 /* Devicetree node identifier for the timer */
 #define KP_TIMER_NODE DT_NODELABEL(timers1)
 
 /* The actuator GPIO port device */
 static const struct device *kp_act_gpio = DEVICE_DT_GET(KP_ACT_GPIO_NODE);
+
+/* The debug GPIO port device */
+static const struct device *kp_dbg_gpio = DEVICE_DT_GET(KP_DBG_GPIO_NODE);
 
 /** Actuator speed, 0-100% */
 static uint32_t kp_act_speed = 100;
@@ -2028,6 +2033,9 @@ main(void)
 	if (!device_is_ready(kp_act_gpio)) {
 		return;
 	}
+	if (!device_is_ready(kp_dbg_gpio)) {
+		return;
+	}
 
 	/*
 	 * Initialize the actuator
@@ -2038,10 +2046,14 @@ main(void)
 	 * Set default capture channel configuration
 	 */
 	for (i = 0; i < ARRAY_SIZE(kp_cap_ch_conf_list); i++) {
+		gpio_pin_configure(kp_dbg_gpio, 4 + i,
+					GPIO_PUSH_PULL | GPIO_OUTPUT_LOW);
 		kp_cap_ch_conf_list[i] = (struct kp_cap_ch_conf){
 			.dir = KP_CAP_DIR_NONE,
 			.rising = true,
 			.name = {0},
+			.dbg_gpio = kp_dbg_gpio,
+			.dbg_pin = 4 + i,
 		};
 	}
 
