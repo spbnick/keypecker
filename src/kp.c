@@ -792,7 +792,6 @@ kp_sample(int32_t target, enum kp_cap_dir dir,
 	assert(move_rc == KP_ACT_MOVE_RC_OK);
 	assert(cap_rc == KP_CAP_RC_OK);
 
-
 	return KP_SAMPLE_RC_OK;
 }
 
