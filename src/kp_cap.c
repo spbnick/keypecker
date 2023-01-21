@@ -121,6 +121,7 @@ kp_cap_start(const struct kp_cap_ch_conf *ch_conf_list,
 		uint32_t timeout_us, uint32_t bounce_us)
 {
 	size_t i;
+	const struct kp_cap_ch_conf *ch_conf;
 	uint32_t ch_mask;
 	k_spinlock_key_t key;
 
@@ -141,8 +142,10 @@ kp_cap_start(const struct kp_cap_ch_conf *ch_conf_list,
 	/* For each channel */
 	for (i = 0; i < KP_CAP_CH_NUM; i++) {
 		ch_mask = kp_cap_ch_mask_list[i];
+		/* NOTE: Must be considered invalid before the check below */
+		ch_conf = &ch_conf_list[i];
 		/* If the channel's capture is enabled */
-		if (i < ch_conf_num && (ch_conf_list[i].dir & dir)) {
+		if (i < ch_conf_num && (ch_conf->dir & dir)) {
 			/* Configure and enable the capture */
 			kp_cap_ch_ccif_mask |= kp_cap_ch_ccif_mask_list[i];
 			LL_TIM_IC_Config(
@@ -150,7 +153,7 @@ kp_cap_start(const struct kp_cap_ch_conf *ch_conf_list,
 				LL_TIM_ACTIVEINPUT_DIRECTTI |
 				LL_TIM_ICPSC_DIV1 |
 				LL_TIM_IC_FILTER_FDIV1 |
-				(ch_conf_list[i].rising
+				(ch_conf->rising
 					? LL_TIM_IC_POLARITY_RISING
 					: LL_TIM_IC_POLARITY_FALLING)
 			);
