@@ -25,14 +25,14 @@
 #include <zephyr/drivers/uart.h>
 #include <zephyr/shell/shell.h>
 
-/* Devicetree node identifier for the GPIO port */
-#define KP_GPIO_NODE DT_NODELABEL(gpiob)
+/* Devicetree node identifier for the actuator's GPIO port */
+#define KP_ACT_GPIO_NODE DT_NODELABEL(gpiob)
 
 /* Devicetree node identifier for the timer */
 #define KP_TIMER_NODE DT_NODELABEL(timers1)
 
-/* The GPIO port device */
-static const struct device *kp_gpio = DEVICE_DT_GET(KP_GPIO_NODE);
+/* The actuator GPIO port device */
+static const struct device *kp_act_gpio = DEVICE_DT_GET(KP_ACT_GPIO_NODE);
 
 /** Actuator speed, 0-100% */
 static uint32_t kp_act_speed = 100;
@@ -2025,14 +2025,14 @@ main(void)
 	/*
 	 * Initialize GPIO pins
 	 */
-	if (!device_is_ready(kp_gpio)) {
+	if (!device_is_ready(kp_act_gpio)) {
 		return;
 	}
 
 	/*
 	 * Initialize the actuator
 	 */
-	kp_act_init(kp_gpio, /* disable */ 3, /* dir */ 8, /* step */ 9);
+	kp_act_init(kp_act_gpio, /* disable */ 3, /* dir */ 8, /* step */ 9);
 
 	/*
 	 * Set default capture channel configuration
