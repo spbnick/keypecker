@@ -570,3 +570,7 @@ Mode, us           11623           22750
 
 TODO: Output channel legends at the end of a long output.
 TODO: Use TIM1 ETR input for triggering, and enable two more channels
+
+---
+TODO: Consider moving all GPIO configuration into main(), as it's the place
+	where everything is connected.

@@ -34,9 +34,6 @@
 /* The GPIO port device */
 static const struct device *kp_gpio = DEVICE_DT_GET(KP_GPIO_NODE);
 
-/* The trigger input GPIO pin */
-static const gpio_pin_t KP_GPIO_PIN_TRIGGER = 4;
-
 /** Actuator speed, 0-100% */
 static uint32_t kp_act_speed = 100;
 
@@ -2031,7 +2028,6 @@ main(void)
 	if (!device_is_ready(kp_gpio)) {
 		return;
 	}
-	gpio_pin_configure(kp_gpio, KP_GPIO_PIN_TRIGGER, GPIO_INPUT);
 
 	/*
 	 * Initialize the actuator
