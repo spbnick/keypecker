@@ -731,8 +731,7 @@ kp_sample(int32_t target, enum kp_cap_dir dir,
 
 	/* Start the capture, if requested */
 	if (capturing) {
-		kp_cap_start(kp_cap_ch_conf_list,
-				ARRAY_SIZE(kp_cap_ch_conf_list), dir,
+		kp_cap_start(kp_cap_ch_conf_list, ch_num, dir,
 				kp_cap_timeout_us, kp_cap_bounce_us);
 	} else {
 		events[EVENT_IDX_CAP_FINISH].type = K_POLL_TYPE_IGNORE;
