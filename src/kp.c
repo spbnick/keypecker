@@ -724,6 +724,8 @@ kp_sample(int32_t target, enum kp_cap_dir dir,
 
 	assert(ch_res_list != NULL || ch_num == 0);
 
+	ch_num = MIN(ch_num, ARRAY_SIZE(kp_cap_ch_conf_list));
+
 	/* Initialize events */
 	kp_input_get_event_init(&events[EVENT_IDX_INPUT]);
 	kp_act_finish_move_event_init(&events[EVENT_IDX_ACT_FINISH_MOVE]);
