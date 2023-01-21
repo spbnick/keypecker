@@ -574,3 +574,34 @@ TODO: Use TIM1 ETR input for triggering, and enable two more channels
 ---
 TODO: Consider moving all GPIO configuration into main(), as it's the place
 	where everything is connected.
+
+So, we still have to wait for a bounce period, when we're moving, even though
+we're not capturing any channels, because the bounce from the previous move
+could trigger the capture of the next move.
+
+The question is whether we should do the waiting in the capture module or in
+the kp_sample() function. In principle, capture doesn't really have to know
+anything about moving. It doesn't even have to be invoked along with movement.
+
+OTOH, the kp_sample() function knows exactly when the actuator, and should
+expect the contact to bounce, so it is kp_sample() which should take care of
+that.
+
+Still OTOH, there's no support for polling for a timer/sleep, so we would have
+to have some thread wait that bounce period and then give a semaphore in order
+for the poll in kp_sample() to work out that the bounce period has ended.
+Perhaps instead we could make the capture module do this for us with certain
+inputs. For example, say that if we're invoking a capture with all channels
+disabled, it will just wait for the bounce period. And if the code doesn't
+want to do that, it should just not invoke the capture. Seems like a good
+idea!
+
+Ah, we have a problem: if we're not capturing any channels, we don't know how
+long it takes to reach the trigger point, and so just waiting for a bounce
+period doesn't work. It might be too short, because it only counts from the
+moment of the first capture.
+
+So perhaps we need to tell the users (ourselves :D) that you should have at
+least one channel enabled both ways. And as a protection against this
+situation we should perhaps make the capture module wait for the full timeout
+plus bounce time when capturing with no channels enabled.
