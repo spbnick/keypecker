@@ -39,6 +39,9 @@ static const struct device *kp_act_gpio = DEVICE_DT_GET(KP_ACT_GPIO_NODE);
 /** The debug GPIO port device */
 static const struct device *kp_dbg_gpio = DEVICE_DT_GET(KP_DBG_GPIO_NODE);
 
+/** The base pin for channel capture debugging */
+const gpio_pin_t kp_dbg_pin_ch_base = 4;
+
 /** Actuator speed, 0-100% */
 static uint32_t kp_act_speed = 100;
 
@@ -2056,7 +2059,7 @@ main(void)
 			.rising = true,
 			.name = {0},
 			.dbg_gpio = kp_dbg_gpio,
-			.dbg_pin = 4 + i,
+			.dbg_pin = kp_dbg_pin_ch_base + i,
 		};
 	}
 
