@@ -605,3 +605,12 @@ So perhaps we need to tell the users (ourselves :D) that you should have at
 least one channel enabled both ways. And as a protection against this
 situation we should perhaps make the capture module wait for the full timeout
 plus bounce time when capturing with no channels enabled.
+
+---
+TODO: Do not waste capture memory, use linear array of capture results with
+      dynamic striding according to the number of channels enabled.
+TODO: Do not capture passes (directions) without channels enabled. Adjust
+      statistics and histogram generation accordingly.
+TODO: Store capture parameters and results in a global state, and add a
+      separate command outputting previous results according to the same
+      output option as taken by the "measure" command. Call it e.g. "display".

@@ -931,7 +931,8 @@ kp_cmd_check(const struct shell *shell, size_t argc, char **argv)
 	/* Check that at least one channel is enabled */
 	if (enabled_channels == 0) {
 		shell_error(shell, "No enabled channels, aborting");
-		shell_info(shell, "Use \"set ch\" command to enable");
+		shell_info(shell,
+			   "Use \"set ch\" command to enable channels");
 		return 1;
 	}
 
@@ -1055,7 +1056,8 @@ kp_cmd_tighten(const struct shell *shell, size_t argc, char **argv)
 	/* Check that at least one channel is enabled */
 	if (enabled_channels == 0) {
 		shell_error(shell, "No enabled channels, aborting");
-		shell_info(shell, "Use \"set ch\" command to enable");
+		shell_info(shell,
+			   "Use \"set ch\" command to enable channels");
 		return 1;
 	}
 
@@ -1804,7 +1806,8 @@ kp_cmd_measure(const struct shell *shell, size_t argc, char **argv)
 	/* Check that at least one channel is enabled */
 	if (enabled_ch_num == 0) {
 		shell_error(shell, "No enabled channels, aborting");
-		shell_info(shell, "Use \"set ch\" command to enable");
+		shell_info(shell,
+			   "Use \"set ch\" command to enable channels");
 		return 1;
 	}
 
