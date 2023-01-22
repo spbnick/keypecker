@@ -67,8 +67,8 @@ static const struct device *kp_cap_ch_dbg_gpio_list[KP_CAP_CH_NUM];
 /**
  * The GPIO pin to use for capture interrupt debugging for each channel.
  * Set high on entrance to the corresponding interrupt, set low on exit.
- * Only valid if the corresponding out_gpio_list element is not NULL.
- * Must be configured.
+ * Only valid if the corresponding kp_cap_ch_dbg_gpio_list element is not
+ * NULL. Must be configured.
  */
 static gpio_pin_t kp_cap_ch_dbg_pin_list[KP_CAP_CH_NUM];
 
