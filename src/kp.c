@@ -25,18 +25,18 @@
 #include <zephyr/drivers/uart.h>
 #include <zephyr/shell/shell.h>
 
-/* Devicetree node identifier for the actuator's GPIO port */
+/** Devicetree node identifier for the actuator's GPIO port */
 #define KP_ACT_GPIO_NODE DT_NODELABEL(gpiob)
-/* Devicetree node identifier for the debug GPIO port */
+/** Devicetree node identifier for the debug GPIO port */
 #define KP_DBG_GPIO_NODE DT_NODELABEL(gpioa)
 
-/* Devicetree node identifier for the timer */
+/** Devicetree node identifier for the timer */
 #define KP_TIMER_NODE DT_NODELABEL(timers1)
 
-/* The actuator GPIO port device */
+/** The actuator GPIO port device */
 static const struct device *kp_act_gpio = DEVICE_DT_GET(KP_ACT_GPIO_NODE);
 
-/* The debug GPIO port device */
+/** The debug GPIO port device */
 static const struct device *kp_dbg_gpio = DEVICE_DT_GET(KP_DBG_GPIO_NODE);
 
 /** Actuator speed, 0-100% */
