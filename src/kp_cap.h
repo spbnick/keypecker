@@ -112,8 +112,8 @@ struct kp_cap_ch_conf {
 
 	/**
 	 * The GPIO pin to use for capture interrupt debugging.
-	 * Set high at the start of the capture, set low when the channel is
-	 * captured. Only valid if dbg_gpio is not NULL. Must be configured.
+	 * Set high at the trigger, set low when the channel is captured.
+	 * Only valid if dbg_gpio is not NULL. Must be configured.
 	 */
 	gpio_pin_t dbg_pin;
 };
@@ -207,8 +207,8 @@ extern bool kp_cap_is_initialized(void);
  * @param dbg_gpio 	The GPIO port to use for update interrupt debugging,
  *			or NULL for none. Must be configured if specified.
  * @param dbg_pin	The GPIO pin to use for update interrupt debugging.
- *			Set high at the start of the capture, set low on
- *			update interrupt. Only valid if dbg_gpio is not NULL.
+ *			Set high at the trigger, set low on update.
+ *			Only valid if dbg_gpio is not NULL.
  *			Must be configured.
  */
 extern void kp_cap_start(const struct kp_cap_ch_conf *ch_conf_list,

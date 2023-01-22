@@ -65,8 +65,8 @@ static K_SEM_DEFINE(kp_cap_done, 0, 1);
 static const struct device *kp_cap_dbg_gpio;
 
 /**
- * The GPIO pin to use for update interrupt debugging. Set high at the start
- * of the capture, set low on update interrupt.
+ * The GPIO pin to use for update interrupt debugging.
+ * Set high at the trigger, set low on update.
  * Only valid if kp_cap_dbg_gpio is not NULL. Must be configured.
  */
 static gpio_pin_t kp_cap_dbg_pin;
@@ -79,9 +79,9 @@ static const struct device *kp_cap_ch_dbg_gpio_list[KP_CAP_CH_NUM];
 
 /**
  * The GPIO pin to use for capture interrupt debugging for each channel.
- * Set high on entrance to the corresponding interrupt, set low on exit.
- * Only valid if the corresponding kp_cap_ch_dbg_gpio_list element is not
- * NULL. Must be configured.
+ * Set high at the trigger, set low on capture. Only valid if the
+ * corresponding kp_cap_ch_dbg_gpio_list element is not NULL.
+ * Must be configured.
  */
 static gpio_pin_t kp_cap_ch_dbg_pin_list[KP_CAP_CH_NUM];
 
@@ -94,6 +94,7 @@ kp_cap_isr(void *arg)
 {
 	bool done = false;
 	k_spinlock_key_t key;
+	size_t i;
 
 	assert(kp_cap_is_initialized());
 
@@ -102,8 +103,26 @@ kp_cap_isr(void *arg)
 	/* If the capture is not aborted */
 	if (!kp_cap_aborted) {
 		uint32_t sr = kp_cap_timer->SR;
-		/* If both the capture and bounce times have expired */
-		if (sr & TIM_SR_UIF) {
+		/* If the timer got triggered */
+		if (sr & TIM_SR_TIF) {
+			/* Raise the debugging pins, if any */
+			if (kp_cap_dbg_gpio != NULL) {
+				gpio_pin_set(kp_cap_dbg_gpio, kp_cap_dbg_pin, 1);
+			}
+			for (i = 0; i < KP_CAP_CH_NUM; i++) {
+				if (kp_cap_ch_dbg_gpio_list[i] != NULL) {
+					gpio_pin_set(
+						kp_cap_ch_dbg_gpio_list[i],
+						kp_cap_ch_dbg_pin_list[i],
+						1
+					);
+				}
+			}
+			/* Clear the interrupt flag */
+			kp_cap_timer->DIER &= ~TIM_SR_TIF;
+			kp_cap_timer->SR &= ~TIM_SR_TIF;
+		/* Else, If both the capture and bounce times have expired */
+		} else if (sr & TIM_SR_UIF) {
 			/* Disable the trigger */
 			LL_TIM_SetSlaveMode(kp_cap_timer,
 						LL_TIM_SLAVEMODE_DISABLED);
@@ -121,7 +140,6 @@ kp_cap_isr(void *arg)
 		} else {
 			uint32_t ccif_mask = sr & kp_cap_ch_ccif_mask;
 			uint32_t new_ccif_mask = ccif_mask & kp_cap_timer->DIER;
-			size_t i;
 
 			/* Lower debugging GPIO pins, if specified */
 			for (i = 0; i < KP_CAP_CH_NUM; i++) {
@@ -212,11 +230,6 @@ kp_cap_start(const struct kp_cap_ch_conf *ch_conf_list,
 			/* Record debug GPIO device and pin, if any */
 			kp_cap_ch_dbg_gpio_list[i] = ch_conf->dbg_gpio;
 			kp_cap_ch_dbg_pin_list[i] = ch_conf->dbg_pin;
-			/* Raise the debugging pin, if any */
-			if (kp_cap_ch_dbg_gpio_list[i] != NULL) {
-				gpio_pin_set(kp_cap_ch_dbg_gpio_list[i],
-						kp_cap_ch_dbg_pin_list[i], 1);
-			}
 		} else {
 			/* Disable the capture */
 			LL_TIM_CC_DisableChannel(kp_cap_timer, ch_mask);
@@ -239,7 +252,7 @@ kp_cap_start(const struct kp_cap_ch_conf *ch_conf_list,
 
 	/* Enable only the interrupts we need */
 	/* NOTE: Assuming SR bits match DIER bits */
-	kp_cap_timer->DIER = kp_cap_ch_ccif_mask | TIM_SR_UIF;
+	kp_cap_timer->DIER = TIM_SR_TIF | kp_cap_ch_ccif_mask | TIM_SR_UIF;
 
 	/* Set auto-reload register to the total timeout */
 	LL_TIM_SetAutoReload(kp_cap_timer,
@@ -249,10 +262,6 @@ kp_cap_start(const struct kp_cap_ch_conf *ch_conf_list,
 	/* Record debug GPIO device and pin, if any */
 	kp_cap_dbg_gpio = dbg_gpio;
 	kp_cap_dbg_pin = dbg_pin;
-	/* Raise the debugging pin, if any */
-	if (kp_cap_dbg_gpio != NULL) {
-		gpio_pin_set(kp_cap_dbg_gpio, kp_cap_dbg_pin, 1);
-	}
 
 	/* Setup the trigger to start (but not stop) counting */
 	LL_TIM_SetSlaveMode(kp_cap_timer, LL_TIM_SLAVEMODE_TRIGGER);

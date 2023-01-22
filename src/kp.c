@@ -2083,6 +2083,10 @@ main(void)
 	if (clock_control_on(clk, (clock_control_subsys_t *)&pclken) < 0) {
 		return;
 	}
+	IRQ_CONNECT(DT_IRQ_BY_NAME(KP_TIMER_NODE, trgcom, irq),
+		    DT_IRQ_BY_NAME(KP_TIMER_NODE, trgcom, priority),
+		    kp_cap_isr, NULL, 0);
+	irq_enable(DT_IRQ_BY_NAME(KP_TIMER_NODE, trgcom, irq));
 	IRQ_CONNECT(DT_IRQ_BY_NAME(KP_TIMER_NODE, up, irq),
 		    DT_IRQ_BY_NAME(KP_TIMER_NODE, up, priority),
 		    kp_cap_isr, NULL, 0);

@@ -630,3 +630,6 @@ FIXME: Maximum down times are longer with "measure" without "verbose"
 ---
 OK, assuming that (^^^) is the bounce that gets captured as another rising edge,
 and makes the times longer, why is that only captured without verbose output?
+
+Could this be due to interrupt status/timing and the ISR reading the registers
+affecting the value written?
