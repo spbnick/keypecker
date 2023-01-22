@@ -105,7 +105,7 @@ kp_cap_isr(void *arg)
 			uint32_t new_ccif_mask = ccif_mask & kp_cap_timer->DIER;
 			size_t i;
 
-			/* Raise debugging GPIO pins, if specified */
+			/* Lower debugging GPIO pins, if specified */
 			for (i = 0; i < KP_CAP_CH_NUM; i++) {
 				if (kp_cap_ch_dbg_gpio_list[i] != NULL &&
 				    (kp_cap_ch_ccif_mask_list[i] &
@@ -113,7 +113,7 @@ kp_cap_isr(void *arg)
 					gpio_pin_set(
 						kp_cap_ch_dbg_gpio_list[i],
 						kp_cap_ch_dbg_pin_list[i],
-						1
+						0
 					);
 				}
 			}
@@ -192,6 +192,11 @@ kp_cap_start(const struct kp_cap_ch_conf *ch_conf_list,
 			/* Record debug GPIO device and pin, if any */
 			kp_cap_ch_dbg_gpio_list[i] = ch_conf->dbg_gpio;
 			kp_cap_ch_dbg_pin_list[i] = ch_conf->dbg_pin;
+			/* Raise the debugging pin, if any */
+			if (kp_cap_ch_dbg_gpio_list[i] != NULL) {
+				gpio_pin_set(kp_cap_ch_dbg_gpio_list[i],
+						kp_cap_ch_dbg_pin_list[i], 1);
+			}
 		} else {
 			/* Disable the capture */
 			LL_TIM_CC_DisableChannel(kp_cap_timer, ch_mask);
@@ -340,12 +345,6 @@ kp_cap_finish(struct kp_cap_ch_res *ch_res_list,
 		if (i < ch_res_num) {
 			ch_res_list[i].status = status;
 			ch_res_list[i].value_us = value_us;
-		}
-
-		/* Lower the debugging pin, if any */
-		if (kp_cap_ch_dbg_gpio_list[i] != NULL) {
-			gpio_pin_set(kp_cap_ch_dbg_gpio_list[i],
-					kp_cap_ch_dbg_pin_list[i], 0);
 		}
 	}
 

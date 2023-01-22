@@ -140,6 +140,7 @@ init	locate	on	abort
 TODO: Check that the actuator module is initialized in all its functions.
 	- done
 TODO: Consider adding a function checking if a position is valid for a power.
+	- not needed anymore, as we don't have "power"
 
 We need to keep all the state locked at first, when starting the movement, and
 then unlock the termination flag, so that abortion can happen.
@@ -224,6 +225,7 @@ the movement with kp_act_abort(), and set a variable specifying that the
 command was aborted?
 
 TODO: Define the move timer inside the move function
+	- perhaps won't be needed if we use a timer peripheral for driving
 ---
 Control key inputs:
 
@@ -307,7 +309,9 @@ It's likely that it is needed, since there's an USART on PA8-9 by default.
 TODO:
 * Make sure USART doesn't interfere with the timer
 	- switch the pins to "alternate function push-pull" somehow
+	- DONE!
 * Make the timer start counting and overflow when movement starts
+	- Done!
 
 OK, PA11 and PA12 are out of the game, as they're used by USB for D- and D+.
 So, we'll have to do with PA8, PA9, PA10. We could use PA10 for trigger, and
@@ -326,6 +330,7 @@ When starting the capture you can specify which channels/how to capture.
 Then you can call a function requesting the result when/if it's ready.
 ---
 TODO: Add support for awaiting overcapture for a bounce period
+	- Done!
 TODO: Retrieve the timer clock rate, like the PWM driver does
       (drivers/pwm/pwm_stm32.c)
 ---
@@ -374,9 +379,9 @@ Eh, maybe let's just keep it this way for now. Timeout of all channels is an
 unlikely event, and the bounce time is usually short.
 
 TODO: Use a signal generator to verify bouncing under timer resolution is
-      captured.
+      captured. We can use a scope and a real switch for that.
 TODO: Use a signal generator to verify bounce-time signals are
-      considered timeouts.
+      considered timeouts. We can use a scope and a real switch for that.
 
 ---
 What are we looking for?
@@ -614,3 +619,14 @@ TODO: Do not capture passes (directions) without channels enabled. Adjust
 TODO: Store capture parameters and results in a global state, and add a
       separate command outputting previous results according to the same
       output option as taken by the "measure" command. Call it e.g. "display".
+TODO: Add shorter command aliases: "speed", "ch" "adj", "timeout", "bounce".
+TODO: Add "setup" command, which sets and tightens the boundaries.
+TODO: Make the "tighten" command smarter and more reliable.
+TODO: Use a timer for driving the actuator.
+TODO: Make commands accept shortened, but unique string argument values
+FIXME: Maximum down times are longer with "measure" without "verbose"
+       argument.
+
+---
+OK, assuming that (^^^) is the bounce that gets captured as another rising edge,
+and makes the times longer, why is that only captured without verbose output?
