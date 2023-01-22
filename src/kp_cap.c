@@ -59,6 +59,19 @@ static volatile bool kp_cap_aborted;
 static K_SEM_DEFINE(kp_cap_done, 0, 1);
 
 /**
+ * GPIO port to use for update interrupt debugging, or NULL for none.
+ * Must be configured if specified.
+ */
+static const struct device *kp_cap_dbg_gpio;
+
+/**
+ * The GPIO pin to use for update interrupt debugging. Set high at the start
+ * of the capture, set low on update interrupt.
+ * Only valid if kp_cap_dbg_gpio is not NULL. Must be configured.
+ */
+static gpio_pin_t kp_cap_dbg_pin;
+
+/**
  * The GPIO port to use for capture interrupt debugging for each channel.
  * Set to NULL if none. Must be configured if specified.
  */
@@ -98,6 +111,11 @@ kp_cap_isr(void *arg)
 			LL_TIM_DisableCounter(kp_cap_timer);
 			/* Disable all the interrupts */
 			kp_cap_timer->DIER = 0;
+			/* Lower the debugging pin, if any */
+			if (kp_cap_dbg_gpio != NULL) {
+				gpio_pin_set(kp_cap_dbg_gpio,
+					     kp_cap_dbg_pin, 0);
+			}
 			/* Prepare to signal the capture is done */
 			done = true;
 		} else {
@@ -149,7 +167,9 @@ kp_cap_isr(void *arg)
 void
 kp_cap_start(const struct kp_cap_ch_conf *ch_conf_list,
 		size_t ch_conf_num, enum kp_cap_dir dir,
-		uint32_t timeout_us, uint32_t bounce_us)
+		uint32_t timeout_us, uint32_t bounce_us,
+		const struct device *dbg_gpio,
+		gpio_pin_t dbg_pin)
 {
 	size_t i;
 	const struct kp_cap_ch_conf *ch_conf;
@@ -225,6 +245,14 @@ kp_cap_start(const struct kp_cap_ch_conf *ch_conf_list,
 	LL_TIM_SetAutoReload(kp_cap_timer,
 			     kp_cap_timeout_ticks +
 			     kp_cap_bounce_ticks);
+
+	/* Record debug GPIO device and pin, if any */
+	kp_cap_dbg_gpio = dbg_gpio;
+	kp_cap_dbg_pin = dbg_pin;
+	/* Raise the debugging pin, if any */
+	if (kp_cap_dbg_gpio != NULL) {
+		gpio_pin_set(kp_cap_dbg_gpio, kp_cap_dbg_pin, 1);
+	}
 
 	/* Setup the trigger to start (but not stop) counting */
 	LL_TIM_SetSlaveMode(kp_cap_timer, LL_TIM_SLAVEMODE_TRIGGER);

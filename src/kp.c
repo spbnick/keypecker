@@ -39,6 +39,9 @@ static const struct device *kp_act_gpio = DEVICE_DT_GET(KP_ACT_GPIO_NODE);
 /** The debug GPIO port device */
 static const struct device *kp_dbg_gpio = DEVICE_DT_GET(KP_DBG_GPIO_NODE);
 
+/** The pin for update interrupt debugging */
+const gpio_pin_t kp_dbg_pin_update = 3;
+
 /** The base pin for channel capture debugging */
 const gpio_pin_t kp_dbg_pin_ch_base = 4;
 
@@ -742,7 +745,8 @@ kp_sample(int32_t target, enum kp_cap_dir dir,
 	/* Start the capture, if requested */
 	if (capturing) {
 		kp_cap_start(kp_cap_ch_conf_list, ch_num, dir,
-				kp_cap_timeout_us, kp_cap_bounce_us);
+				kp_cap_timeout_us, kp_cap_bounce_us,
+				kp_dbg_gpio, kp_dbg_pin_update);
 	} else {
 		events[EVENT_IDX_CAP_FINISH].type = K_POLL_TYPE_IGNORE;
 	}
@@ -2042,6 +2046,8 @@ main(void)
 	if (!device_is_ready(kp_dbg_gpio)) {
 		return;
 	}
+	gpio_pin_configure(kp_dbg_gpio, kp_dbg_pin_update,
+				GPIO_PUSH_PULL | GPIO_OUTPUT_LOW);
 
 	/*
 	 * Initialize the actuator
