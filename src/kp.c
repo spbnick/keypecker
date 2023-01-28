@@ -2022,7 +2022,6 @@ SHELL_CMD_ARG_REGISTER(measure, NULL,
 			"brief (default), or verbose results",
 			kp_cmd_measure, 1, 2);
 
-#define TIMER_NODE
 void
 main(void)
 {
