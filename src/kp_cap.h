@@ -178,7 +178,7 @@ extern void kp_cap_isr(void *arg);
  * @param timer		The STM32 timer to use for capturing.
  * 			The timer's rising CH1 input will be used to start
  * 			counting, and the CH2-CH3 channels to capture events,
- * 			as configured after initialization.
+ * 			as configured when starting the capture.
  * @param dbg_gpio	The GPIO port to use for update interrupt debugging,
  *			or NULL for none. Must be configured if specified.
  * @param dbg_pin	The GPIO pin to use for update interrupt debugging.
