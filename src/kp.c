@@ -395,6 +395,9 @@ kp_cmd_set_bottom(const struct shell *shell, size_t argc, char **argv)
 /** Capture channel configurations */
 static struct kp_cap_ch_conf kp_cap_ch_conf_list[KP_CAP_CH_NUM];
 
+/* List of capture result lists */
+static struct kp_cap_ch_res kp_cap_ch_res_list_list[512][KP_CAP_CH_NUM];
+
 /** Capture timeout, us */
 static uint32_t kp_cap_timeout_us = 1000000;
 
@@ -1768,8 +1771,6 @@ kp_cmd_measure_output_histogram(
 static int
 kp_cmd_measure(const struct shell *shell, size_t argc, char **argv)
 {
-	/* Capture result list */
-	static struct kp_cap_ch_res ch_res_list_list[512][KP_CAP_CH_NUM];
 	const char *arg;
 	long passes;
 	bool verbose;
@@ -1827,13 +1828,13 @@ kp_cmd_measure(const struct shell *shell, size_t argc, char **argv)
 	} else {
 		arg = argv[1];
 		if (!kp_parse_non_negative_number(arg, &passes) ||
-				passes == 0 ||
-				passes > ARRAY_SIZE(ch_res_list_list)) {
+		    passes == 0 ||
+		    passes > ARRAY_SIZE(kp_cap_ch_res_list_list)) {
 			shell_error(
 				shell,
 				"Invalid number of passes "
 				"(1-%zu expected): %s",
-				ARRAY_SIZE(ch_res_list_list), arg
+				ARRAY_SIZE(kp_cap_ch_res_list_list), arg
 			);
 			return 1;
 		}
@@ -1919,8 +1920,8 @@ kp_cmd_measure(const struct shell *shell, size_t argc, char **argv)
 		rc = kp_sample(
 			at_top ? kp_act_pos_bottom : kp_act_pos_top,
 			at_top ? KP_CAP_DIR_DOWN : KP_CAP_DIR_UP,
-			ch_res_list_list[pass],
-			ARRAY_SIZE(ch_res_list_list[pass])
+			kp_cap_ch_res_list_list[pass],
+			ARRAY_SIZE(kp_cap_ch_res_list_list[pass])
 		);
 		if (rc != KP_SAMPLE_RC_OK) {
 			goto finish;
@@ -1932,11 +1933,13 @@ kp_cmd_measure(const struct shell *shell, size_t argc, char **argv)
 		}
 
 		COL(&out, at_top ? "Down" : "Up");
-		for (i = 0; i < ARRAY_SIZE(ch_res_list_list[pass]); i++) {
+		for (i = 0;
+		     i < ARRAY_SIZE(kp_cap_ch_res_list_list[pass]);
+		     i++) {
 			if (!kp_cap_ch_conf_list[i].dir) {
 				continue;
 			}
-			ch_res = &ch_res_list_list[pass][i];
+			ch_res = &kp_cap_ch_res_list_list[pass][i];
 			switch (ch_res->status) {
 			case KP_CAP_CH_STATUS_DISABLED:
 				COL(&out, "");
@@ -1960,10 +1963,12 @@ kp_cmd_measure(const struct shell *shell, size_t argc, char **argv)
 
 	if (passes > 1) {
 		kp_cmd_measure_output_stats(
-			&out, start_top, ch_res_list_list, passes, verbose
+			&out, start_top, kp_cap_ch_res_list_list,
+			passes, verbose
 		);
 		kp_cmd_measure_output_histogram(
-			&out, start_top, ch_res_list_list, passes, verbose
+			&out, start_top, kp_cap_ch_res_list_list,
+			passes, verbose
 		);
 	}
 
