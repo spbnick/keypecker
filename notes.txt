@@ -633,3 +633,15 @@ and makes the times longer, why is that only captured without verbose output?
 
 Could this be due to interrupt status/timing and the ISR reading the registers
 affecting the value written?
+
+OK, so what's the difference? Timing doesn't seem to be it, it's the output to
+the shell that makes it behave better in particular, it seems.
+
+So, the hardware manages to sometimes record a bounce, if we don't output to
+the shell. Could it be the interference when the serial port is not driven?
+
+TODO: Use a timer for movement
+TODO: Implement separate output command
+TODO: Raise the debug pin when a long time is captured on one of the channels
+TODO: Figure out why the actuator stops working when the driver board/heatsink
+      is flexed
