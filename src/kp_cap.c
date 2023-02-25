@@ -182,10 +182,23 @@ kp_cap_isr(void *arg)
 	}
 }
 
+size_t
+kp_cap_conf_ch_num(const struct kp_cap_conf *conf, enum kp_cap_dirs dirs)
+{
+	size_t i;
+	size_t dir_ch_num;
+	assert(kp_cap_conf_is_valid(conf));
+	assert(kp_cap_dirs_is_valid(dirs));
+	for (dir_ch_num = 0, i = 0; i < ARRAY_SIZE(conf->ch_list); i++) {
+		if (conf->ch_list[i].dirs & dirs) {
+			dir_ch_num++;
+		}
+	}
+	return dir_ch_num;
+}
+
 void
-kp_cap_start(const struct kp_cap_ch_conf *ch_conf_list,
-		size_t ch_conf_num, enum kp_cap_dir dir,
-		uint32_t timeout_us, uint32_t bounce_us)
+kp_cap_start(const struct kp_cap_conf *conf, enum kp_cap_dirs dirs)
 {
 	size_t i;
 	const struct kp_cap_ch_conf *ch_conf;
@@ -193,9 +206,8 @@ kp_cap_start(const struct kp_cap_ch_conf *ch_conf_list,
 	k_spinlock_key_t key;
 
 	assert(kp_cap_is_initialized());
-	assert(ch_conf_list != NULL || ch_conf_num == 0);
-	assert(kp_cap_dir_is_valid(dir));
-	assert(timeout_us + bounce_us <= KP_CAP_TIME_MAX_US);
+	assert(kp_cap_conf_is_valid(conf));
+	assert(kp_cap_dirs_is_valid(dirs));
 
 	/* Wait for the capture to be available */
 	k_sem_take(&kp_cap_available, K_FOREVER);
@@ -210,9 +222,9 @@ kp_cap_start(const struct kp_cap_ch_conf *ch_conf_list,
 	for (i = 0; i < KP_CAP_CH_NUM; i++) {
 		ch_mask = kp_cap_ch_mask_list[i];
 		/* NOTE: Must be considered invalid before the check below */
-		ch_conf = &ch_conf_list[i];
+		ch_conf = &conf->ch_list[i];
 		/* If the channel's capture is enabled */
-		if (i < ch_conf_num && (ch_conf->dir & dir)) {
+		if (ch_conf->dirs & dirs) {
 			/* Configure and enable the capture */
 			kp_cap_ch_ccif_mask |= kp_cap_ch_ccif_mask_list[i];
 			LL_TIM_IC_Config(
@@ -240,10 +252,10 @@ kp_cap_start(const struct kp_cap_ch_conf *ch_conf_list,
 	kp_cap_aborted = false;
 
 	/* Remember the number of ticks to wait for capture */
-	kp_cap_timeout_ticks = timeout_us / KP_CAP_RES_US;
+	kp_cap_timeout_ticks = conf->timeout_us / KP_CAP_RES_US;
 
 	/* Remember the number of ticks to wait for a channel to bounce */
-	kp_cap_bounce_ticks = bounce_us / KP_CAP_RES_US;
+	kp_cap_bounce_ticks = conf->bounce_us / KP_CAP_RES_US;
 
 	/* Clear all the overcapture/interrupt flags */
 	kp_cap_timer->SR = 0;
@@ -313,9 +325,10 @@ kp_cap_finish_event_init(struct k_poll_event *event)
 
 enum kp_cap_rc
 kp_cap_finish(struct kp_cap_ch_res *ch_res_list,
-		size_t ch_res_num, k_timeout_t timeout)
+	      size_t ch_res_num, k_timeout_t timeout)
 {
 	size_t i;
+	struct kp_cap_ch_res *ch_res;
 	enum kp_cap_ch_status status;
 	uint32_t value_ticks;
 	uint32_t value_us;
@@ -339,7 +352,7 @@ kp_cap_finish(struct kp_cap_ch_res *ch_res_list,
 	memset(ch_res_list, 0, sizeof(*ch_res_list) * ch_res_num);
 
 	/* For each channel */
-	for (i = 0; i < KP_CAP_CH_NUM; i++) {
+	for (ch_res = ch_res_list, i = 0; i < KP_CAP_CH_NUM; i++) {
 		/* Skip disabled channels */
 		if (!LL_TIM_CC_IsEnabledChannel(kp_cap_timer,
 						kp_cap_ch_mask_list[i])) {
@@ -372,10 +385,12 @@ kp_cap_finish(struct kp_cap_ch_res *ch_res_list,
 			value_us = UINT32_MAX;
 		}
 
-		/* If the channel's result is requested */
-		if (i < ch_res_num) {
-			ch_res_list[i].status = status;
-			ch_res_list[i].value_us = value_us;
+		/* Output channel result, if requested */
+		if (ch_res_num > 0) {
+			ch_res->status = status;
+			ch_res->value_us = value_us;
+			ch_res_num--;
+			ch_res++;
 		}
 	}
 
@@ -386,59 +401,59 @@ kp_cap_finish(struct kp_cap_ch_res *ch_res_list,
 }
 
 bool
-kp_cap_dir_from_str(const char *str, enum kp_cap_dir *pdir)
+kp_cap_dirs_from_str(const char *str, enum kp_cap_dirs *pdirs)
 {
-	enum kp_cap_dir dir;
+	enum kp_cap_dirs dirs;
 	assert(str != NULL);
 
 	if (kp_strcasecmp(str, "none") == 0) {
-		dir = KP_CAP_DIR_NONE;
+		dirs = KP_CAP_DIRS_NONE;
 	} else if (kp_strcasecmp(str, "up") == 0) {
-		dir = KP_CAP_DIR_UP;
+		dirs = KP_CAP_DIRS_UP;
 	} else if (kp_strcasecmp(str, "down") == 0) {
-		dir = KP_CAP_DIR_DOWN;
+		dirs = KP_CAP_DIRS_DOWN;
 	} else if (kp_strcasecmp(str, "both") == 0) {
-		dir = KP_CAP_DIR_BOTH;
+		dirs = KP_CAP_DIRS_BOTH;
 	} else {
 		return false;
 	}
 
-	if (pdir != NULL) {
-		*pdir = dir;
+	if (pdirs != NULL) {
+		*pdirs = dirs;
 	}
 
 	return true;
 }
 
 const char *
-kp_cap_dir_to_lcstr(enum kp_cap_dir dir)
+kp_cap_dirs_to_lcstr(enum kp_cap_dirs dirs)
 {
 	static const char *str_list[] = {
-#define STATUS(_token, _lc_token) [KP_CAP_DIR_##_token] = #_lc_token
+#define STATUS(_token, _lc_token) [KP_CAP_DIRS_##_token] = #_lc_token
 		STATUS(NONE, none),
 		STATUS(UP, up),
 		STATUS(DOWN, down),
 		STATUS(BOTH, both),
 #undef STATUS
 	};
-	const char *str = (dir >= 0 && dir < ARRAY_SIZE(str_list))
-		? str_list[dir] : NULL;
+	const char *str = (dirs >= 0 && dirs < ARRAY_SIZE(str_list))
+		? str_list[dirs] : NULL;
 	return str == NULL ? "unknown" : str;
 }
 
 const char *
-kp_cap_dir_to_cpstr(enum kp_cap_dir dir)
+kp_cap_dirs_to_cpstr(enum kp_cap_dirs dirs)
 {
 	static const char *str_list[] = {
-#define STATUS(_token, _cp_token) [KP_CAP_DIR_##_token] = #_cp_token
+#define STATUS(_token, _cp_token) [KP_CAP_DIRS_##_token] = #_cp_token
 		STATUS(NONE, None),
 		STATUS(UP, Up),
 		STATUS(DOWN, Down),
 		STATUS(BOTH, Both),
 #undef STATUS
 	};
-	const char *str = (dir >= 0 && dir < ARRAY_SIZE(str_list))
-		? str_list[dir] : NULL;
+	const char *str = (dirs >= 0 && dirs < ARRAY_SIZE(str_list))
+		? str_list[dirs] : NULL;
 	return str == NULL ? "unknown" : str;
 }
 
@@ -447,7 +462,6 @@ kp_cap_ch_status_to_str(enum kp_cap_ch_status status)
 {
 	static const char *str_list[KP_CAP_CH_STATUS_NUM] = {
 #define STATUS_STR(_token) [KP_CAP_CH_STATUS_##_token] = #_token
-		STATUS_STR(DISABLED),
 		STATUS_STR(TIMEOUT),
 		STATUS_STR(OK),
 		STATUS_STR(OVERCAPTURE),

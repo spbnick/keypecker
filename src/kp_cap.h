@@ -36,65 +36,204 @@ extern "C" {
 /** Maximum number of characters in a user's channel name */
 #define KP_CAP_CH_NAME_MAX_LEN	15
 
-/** Capture direction (bitmap) */
-enum kp_cap_dir {
-	/** No capture */
-	KP_CAP_DIR_NONE	= 0,
-	/** Capture on the way up only */
-	KP_CAP_DIR_UP,
-	/** Capture on the way down only */
-	KP_CAP_DIR_DOWN,
-	/** Capture both ways */
-	KP_CAP_DIR_BOTH
+/** Capture direction sets (bitmaps) */
+enum kp_cap_dirs {
+	/** No directions (the empty set) */
+	KP_CAP_DIRS_NONE	= 0,
+	/** Up (a unit set) */
+	KP_CAP_DIRS_UP,
+	/** Down (a unit set) */
+	KP_CAP_DIRS_DOWN,
+	/** Both up and down (the universal set) */
+	KP_CAP_DIRS_BOTH
+};
+
+/** Non-empty capture direction set index */
+enum kp_cap_ne_dirs {
+	/** Up */
+	KP_CAP_NE_DIRS_UP = 0,
+	/** Down */
+	KP_CAP_NE_DIRS_DOWN,
+	/** Both up and down */
+	KP_CAP_NE_DIRS_BOTH,
+	/** Number of non-empty direction sets (not an index itself) */
+	KP_CAP_NE_DIRS_NUM
 };
 
 /**
- * Check if a capture direction is valid.
+ * Check if a capture direction set is valid.
  *
- * @param dir	The direction to check.
+ * @param dirs	The direction set to check.
  *
- * @return True if the direction is valid, false otherwise.
+ * @return True if the direction set is valid, false otherwise.
  */
 static inline bool
-kp_cap_dir_is_valid(enum kp_cap_dir dir)
+kp_cap_dirs_is_valid(enum kp_cap_dirs dirs)
 {
-	return (dir & ~KP_CAP_DIR_BOTH) == 0;
+	return (dirs & ~KP_CAP_DIRS_BOTH) == 0;
 }
 
 /**
- * Convert a string to a capture direction (regardless of case).
+ * Check that a capture direction set is a unit set.
+ * That is, it contains exactly one member (either UP or DOWN).
+ *
+ * @param dirs	The direction set to check.
+ *
+ * @return True if the set is either UP or DOWN.
+ */
+static bool kp_cap_dirs_is_unit(enum kp_cap_dirs dirs)
+{
+	assert(kp_cap_dirs_is_valid(dirs));
+	return dirs == KP_CAP_DIRS_UP || dirs == KP_CAP_DIRS_DOWN;
+}
+
+/**
+ * Produce a unit capture direction set from a boolean direction,
+ * meaning "down" when true.
+ *
+ * @param down	True if the direction is down, false if up.
+ *
+ * @return The generated direction set.
+ */
+static inline enum kp_cap_dirs kp_cap_dirs_from_down(bool down)
+{
+	assert((down & 1) == down);
+	return KP_CAP_DIRS_UP + down;
+}
+
+/**
+ * Convert a unit capture direction set to a boolean direction,
+ * meaning "down" when true.
+ *
+ * @param dirs	The unit direction set to convert.
+ *
+ * @return True if the direction was down, and false if up.
+ */
+static inline bool kp_cap_dirs_to_down(enum kp_cap_dirs dirs)
+{
+	assert(kp_cap_dirs_is_unit(dirs));
+	return dirs - KP_CAP_DIRS_UP;
+}
+
+/**
+ * Produce a unit capture direction set from a boolean direction,
+ * meaning "up" when true.
+ *
+ * @param up	True if the direction is up, false if down.
+ *
+ * @return The generated direction set.
+ */
+static inline enum kp_cap_dirs kp_cap_dirs_from_up(bool up)
+{
+	assert((up & 1) == up);
+	return KP_CAP_DIRS_DOWN - up;
+}
+
+/**
+ * Convert a unit capture direction set to a boolean direction,
+ * meaning "up" when true.
+ *
+ * @param dirs	The unit direction set to convert.
+ *
+ * @return True if the direction was up, and false if down.
+ */
+static inline bool kp_cap_dirs_to_up(enum kp_cap_dirs dirs)
+{
+	assert(kp_cap_dirs_is_unit(dirs));
+	return KP_CAP_DIRS_DOWN - dirs;
+}
+
+/**
+ * Convert a direction set to an index of a non-empty direction set.
+ *
+ * @param dirs	The direction set to convert. Must be a non-empty set.
+ *
+ * @return The index of the non-empty direction set.
+ */
+static inline enum kp_cap_ne_dirs kp_cap_dirs_to_ne(enum kp_cap_dirs dirs)
+{
+	assert(kp_cap_dirs_is_valid(dirs));
+	assert(dirs != KP_CAP_DIRS_NONE);
+	return (enum kp_cap_ne_dirs)(dirs - 1);
+}
+
+/**
+ * Convert a non-empty direction set index to a direction set.
+ *
+ * @param ne_dirs	The index to produce a direction set from.
+ *
+ * @return The non-empty direction set corresponding to the index.
+ */
+static inline enum kp_cap_dirs kp_cap_dirs_from_ne(enum kp_cap_ne_dirs ne_dirs)
+{
+	assert(ne_dirs < KP_CAP_NE_DIRS_NUM);
+	return (enum kp_cap_dirs)(ne_dirs + 1);
+}
+
+/**
+ * Produce the index of a unit capture direction set from a boolean direction,
+ * meaning "down" when true.
+ *
+ * @param down	True if the direction is down, false if up.
+ *
+ * @return The generated direction set index.
+ */
+static inline enum kp_cap_ne_dirs kp_cap_ne_dirs_from_down(bool down)
+{
+	assert((down & 1) == down);
+	return (enum kp_cap_ne_dirs)down;
+}
+
+/**
+ * Produce the index of a unit capture direction set from a boolean direction,
+ * meaning "up" when true.
+ *
+ * @param up	True if the direction is up, false if down.
+ *
+ * @return The generated direction set index.
+ */
+static inline enum kp_cap_ne_dirs kp_cap_ne_dirs_from_up(bool up)
+{
+	assert((up & 1) == up);
+	return (enum kp_cap_ne_dirs)(KP_CAP_NE_DIRS_DOWN - up);
+}
+
+/**
+ * Convert a string to a capture direction set (regardless of case).
  *
  * @param str	The string to convert.
- * @param pdir	Location for the converted direction (if valid).
- * 		Can be NULL to discard the converted direction.
+ * @param pdirs	Location for the converted direction set (if valid).
+ * 		Can be NULL to discard the converted direction set.
  *
- * @return True if the string was valid and the direction was output,
- *         False, if the string was invalid and the direction was not output.
+ * @return True if the string was valid and the direction set was output,
+ *         False, if the string was invalid and the direction set was not
+ *         output.
  */
-extern bool kp_cap_dir_from_str(const char *str, enum kp_cap_dir *pdir);
+extern bool kp_cap_dirs_from_str(const char *str, enum kp_cap_dirs *pdirs);
 
 /**
- * Convert a capture direction to a lower-case string.
+ * Convert a capture direction set to a lower-case string.
  *
- * @param dir	The direction to convert.
+ * @param dirs	The direction set to convert.
  *
- * @return The string representing the direction.
+ * @return The string representing the direction set.
  */
-extern const char *kp_cap_dir_to_lcstr(enum kp_cap_dir dir);
+extern const char *kp_cap_dirs_to_lcstr(enum kp_cap_dirs dirs);
 
 /**
- * Convert a capture direction to a capitalized string.
+ * Convert a capture direction set to a capitalized string.
  *
- * @param dir	The direction to convert.
+ * @param dirs	The direction set to convert.
  *
- * @return The string representing the direction.
+ * @return The string representing the direction set.
  */
-extern const char *kp_cap_dir_to_cpstr(enum kp_cap_dir dir);
+extern const char *kp_cap_dirs_to_cpstr(enum kp_cap_dirs dirs);
 
 /** Capture channel configuration */
 struct kp_cap_ch_conf {
 	/** The movement directions to capture in (bitmap) */
-	enum kp_cap_dir dir;
+	enum kp_cap_dirs dirs;
+
 	/**
 	 * True if the capture should happen on rising edges.
 	 * False if it should happen on falling edges.
@@ -120,8 +259,6 @@ struct kp_cap_ch_conf {
 
 /** Channel capture status */
 enum kp_cap_ch_status {
-	/** Capture not enabled (for this direction) */
-	KP_CAP_CH_STATUS_DISABLED = 0,
 	/** Capture timed out */
 	KP_CAP_CH_STATUS_TIMEOUT,
 	/** Capture succesfull */
@@ -157,12 +294,12 @@ extern const char *kp_cap_ch_status_to_str(enum kp_cap_ch_status status);
 /** Channel capture result */
 struct kp_cap_ch_res {
 	/** Capture status */
-	enum kp_cap_ch_status status:4;
+	enum kp_cap_ch_status status:2;
 	/**
 	 * Captured time value.
 	 * Only valid if status is OK or OVERCAPTURE.
 	 */
-	uint32_t value_us:28;
+	uint32_t value_us:30;
 };
 
 /**
@@ -197,26 +334,55 @@ extern void kp_cap_init(TIM_TypeDef* timer,
  */
 extern bool kp_cap_is_initialized(void);
 
+/** Capture configuration */
+struct kp_cap_conf {
+	/** Channel configurations */
+	struct kp_cap_ch_conf ch_list[KP_CAP_CH_NUM];
+	/**
+	 * The maximum time to wait for all channels to be captured,
+	 * microseconds. Must not be greater than KP_CAP_TIME_MAX_US -
+	 * bounce_us.
+	 */
+	uint32_t timeout_us;
+	/**
+	 * The minimum time to wait for a channel to bounce, microseconds.
+	 * Must not be greater than KP_CAP_TIME_MAX_US - timeout_us.
+	 */
+	uint32_t bounce_us;
+};
+
+/**
+ * Check that a capture configuration is valid.
+ *
+ * @param conf	The configuration to check.
+ *
+ * @return True if the configuration is valid, false otherwise.
+ */
+static inline bool
+kp_cap_conf_is_valid(const struct kp_cap_conf *conf)
+{
+	return conf != NULL &&
+	       (conf->timeout_us + conf->bounce_us) <= KP_CAP_TIME_MAX_US;
+}
+
+/**
+ * Get the number of channels enabled in a configuration for the specified
+ * directions.
+ *
+ * @param conf	The capture configuration to count the channels in.
+ * @param dirs	The directions to count the channels in. Use KP_CAP_DIRS_BOTH
+ * 		to count all enabled channels, regardless of direction.
+ */
+extern size_t kp_cap_conf_ch_num(const struct kp_cap_conf *conf,
+				 enum kp_cap_dirs dirs);
+
 /**
  * Start capture, waiting for the previous one to finish first.
  *
- * @param ch_conf_list	An array configurations for channels to be captured.
- * @param ch_conf_num	Number of configurations in the "ch_conf_list".
- * 			Any channels above this number won't be captured.
- * 			Any configurations above KP_CAP_CH_NUM will be
- * 			ignored.
- * @param dir		The movement direction the capture is happening in.
- * @param timeout_us	The maximum time to wait for all channels to be
- * 			captured, microseconds. Must not be greater than
- * 			KP_CAP_TIME_MAX_US - bounce_us.
- * @param bounce_us	The minimum time to wait for a channel to bounce,
- *			microseconds. Must not be greater than
- * 			KP_CAP_TIME_MAX_US - timeout_us.
+ * @param conf	Capture configuration to use.
+ * @param dirs	The movement directions the capture is happening in.
  */
-extern void kp_cap_start(const struct kp_cap_ch_conf *ch_conf_list,
-			 size_t ch_conf_num, enum kp_cap_dir dir,
-			 uint32_t timeout_us, uint32_t bounce_us);
-
+extern void kp_cap_start(const struct kp_cap_conf *conf, enum kp_cap_dirs dirs);
 
 /**
  * Initialize a poll event to wait for finished captures.
@@ -271,9 +437,11 @@ extern bool kp_cap_abort(void);
  *
  * @param ch_res_list	List of structures for channel capture results.
  * 			Only modified if KP_CAP_RC_OK is returned.
- * @param ch_res_num	Number of channels to retrieve results for.
- * 			Result structures above KP_CAP_CH_NUM will be
- * 			unmodified.
+ * 			Only results for channels enabled in the configuration
+ * 			and the directions passed to kp_cap_start() (as
+ * 			counted by kp_cap_conf_ch_num()) will be output. Can
+ * 			be NULL if ch_res_num is zero.
+ * @param ch_res_num	Maximum number of channels to retrieve results for.
  * @param timeout	The time to wait for the capture to finish, or one of
  * 			the special values K_NO_WAIT and K_FOREVER.
  *

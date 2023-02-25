@@ -645,3 +645,17 @@ TODO: Implement separate output command
 TODO: Raise the debug pin when a long time is captured on one of the channels
 TODO: Figure out why the actuator stops working when the driver board/heatsink
       is flexed
+TODO: Refer to enum kp_cap_dir as "Capture direction set"
+
+Should we count passes which don't capture any channels?
+	For tightening?
+	For checking?
+	For measuring?
+Should we actually consider going both ways a "pass" for simplicity?
+	If yes, should it be always first down, then up, for simplicity, or
+	could it be either?
+		Seems like that should be the solution.
+		However, this would limit our testing to go always in two
+		specific directions, and that may prevent some bugs from
+		reproducing.
+		So perhaps it's better to keep giving the number of passes.
