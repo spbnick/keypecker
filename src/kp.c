@@ -2142,15 +2142,24 @@ main(void)
 	kp_cap_conf.timeout_us = 1000000;
 	kp_cap_conf.bounce_us = 50000;
 	for (i = 0; i < ARRAY_SIZE(kp_cap_conf.ch_list); i++) {
-		gpio_pin_configure(kp_dbg_gpio, 4 + i,
-					GPIO_PUSH_PULL | GPIO_OUTPUT_LOW);
 		kp_cap_conf.ch_list[i] = (struct kp_cap_ch_conf){
 			.dirs = KP_CAP_DIRS_NONE,
 			.rising = true,
 			.name = {0},
-			.dbg_gpio = kp_dbg_gpio,
-			.dbg_pin = kp_dbg_pin_ch_base + i,
 		};
+	}
+
+	/*
+	 * Configure capturer debug output
+	 */
+	struct kp_cap_dbg_conf cap_dbg_conf = {
+		.gpio = kp_dbg_gpio,
+		.update_pin = kp_dbg_pin_update,
+	};
+	for (i = 0; i < ARRAY_SIZE(cap_dbg_conf.cap_pin_list); i++) {
+		gpio_pin_configure(cap_dbg_conf.gpio, kp_dbg_pin_ch_base + i,
+					GPIO_PUSH_PULL | GPIO_OUTPUT_LOW);
+		cap_dbg_conf.cap_pin_list[i] = kp_dbg_pin_ch_base + i;
 	}
 
 	/*
@@ -2179,6 +2188,5 @@ main(void)
 		    DT_IRQ_BY_NAME(KP_TIMER_NODE, cc, priority),
 		    kp_cap_isr, NULL, 0);
 	irq_enable(DT_IRQ_BY_NAME(KP_TIMER_NODE, cc, irq));
-	kp_cap_init((TIM_TypeDef *)DT_REG_ADDR(KP_TIMER_NODE),
-		    kp_dbg_gpio, kp_dbg_pin_update);
+	kp_cap_init((TIM_TypeDef *)DT_REG_ADDR(KP_TIMER_NODE), &cap_dbg_conf);
 }

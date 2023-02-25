@@ -242,19 +242,6 @@ struct kp_cap_ch_conf {
 
 	/** User's channel name */
 	char name[KP_CAP_CH_NAME_MAX_LEN + 1];
-
-	/**
-	 * The GPIO port to use for capture interrupt debugging,
-	 * or NULL for none. Must be configured if specified.
-	 */
-	const struct device *dbg_gpio;
-
-	/**
-	 * The GPIO pin to use for capture interrupt debugging.
-	 * Set high at the trigger, set low when the channel is captured.
-	 * Only valid if dbg_gpio is not NULL. Must be configured.
-	 */
-	gpio_pin_t dbg_pin;
 };
 
 /** Channel capture status */
@@ -309,6 +296,31 @@ struct kp_cap_ch_res {
  */
 extern void kp_cap_isr(void *arg);
 
+
+/** Debug output configuration */
+struct kp_cap_dbg_conf {
+	/*
+	 * The GPIO port to use for debug event output.
+	 * NULL to have debugging disabled.
+	 */
+	const struct device *gpio;
+
+	/*
+	 * The GPIO pin to use for update interrupt debugging.
+	 * Set high at the trigger, set low on update.
+	 * Must be configured. Set to UINT8_MAX to disable.
+	 */
+	gpio_pin_t update_pin;
+
+	/**
+	 * The GPIO pins to use for capture interrupt debugging. One per
+	 * channel. Each set high at the trigger, set low when the channel is
+	 * captured. Each must be configured. Any can be set to UINT8_MAX to
+	 * disable.
+	 */
+	gpio_pin_t cap_pin_list[KP_CAP_CH_NUM];
+};
+
 /**
  * Initialize the capturer.
  *
@@ -316,16 +328,11 @@ extern void kp_cap_isr(void *arg);
  * 			The timer's rising CH1 input will be used to start
  * 			counting, and the CH2-CH3 channels to capture events,
  * 			as configured when starting the capture.
- * @param dbg_gpio	The GPIO port to use for update interrupt debugging,
- *			or NULL for none. Must be configured if specified.
- * @param dbg_pin	The GPIO pin to use for update interrupt debugging.
- *			Set high at the trigger, set low on update.
- *			Only valid if dbg_gpio is not NULL.
- *			Must be configured.
+ * @param dbg_conf	Debug output configuration.
+ *			NULL to have debugging output disabled.
  */
 extern void kp_cap_init(TIM_TypeDef* timer,
-			const struct device *dbg_gpio,
-			gpio_pin_t dbg_pin);
+			const struct kp_cap_dbg_conf *dbg_conf);
 
 /**
  * Check if the capturer is initialized.

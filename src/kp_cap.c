@@ -40,18 +40,8 @@ static const size_t kp_cap_ch_ccr_offset_list[KP_CAP_CH_NUM] = {
 /** The timer to use for capture */
 static TIM_TypeDef* kp_cap_timer = NULL;
 
-/**
- * GPIO port to use for update interrupt debugging, or NULL for none.
- * Must be configured if specified.
- */
-static const struct device *kp_cap_dbg_gpio;
-
-/**
- * The GPIO pin to use for update interrupt debugging.
- * Set high at the trigger, set low on update.
- * Only valid if kp_cap_dbg_gpio is not NULL. Must be configured.
- */
-static gpio_pin_t kp_cap_dbg_pin;
+/** Debugg output configuration */
+struct kp_cap_dbg_conf kp_cap_dbg_conf;
 
 /** The semaphore signaling a capture can be started */
 static K_SEM_DEFINE(kp_cap_available, 1, 1);
@@ -71,20 +61,6 @@ static volatile bool kp_cap_aborted;
 /** The semaphore signaling a capture is done */
 static K_SEM_DEFINE(kp_cap_done, 0, 1);
 
-/**
- * The GPIO port to use for capture interrupt debugging for each channel.
- * Set to NULL if none. Must be configured if specified.
- */
-static const struct device *kp_cap_ch_dbg_gpio_list[KP_CAP_CH_NUM];
-
-/**
- * The GPIO pin to use for capture interrupt debugging for each channel.
- * Set high at the trigger, set low on capture. Only valid if the
- * corresponding kp_cap_ch_dbg_gpio_list element is not NULL.
- * Must be configured.
- */
-static gpio_pin_t kp_cap_ch_dbg_pin_list[KP_CAP_CH_NUM];
-
 /** The interrupt state spinlock */
 /** Only needs to be held if kp_cap_available is taken */
 static struct k_spinlock kp_cap_lock = {};
@@ -92,6 +68,7 @@ static struct k_spinlock kp_cap_lock = {};
 void
 kp_cap_isr(void *arg)
 {
+	static const struct kp_cap_dbg_conf *dbg = &kp_cap_dbg_conf;
 	bool done = false;
 	k_spinlock_key_t key;
 	size_t i;
@@ -106,14 +83,14 @@ kp_cap_isr(void *arg)
 		/* If the timer got triggered */
 		if (sr & TIM_SR_TIF) {
 			/* Raise the debugging pins, if any */
-			if (kp_cap_dbg_gpio != NULL) {
-				gpio_pin_set(kp_cap_dbg_gpio, kp_cap_dbg_pin, 1);
+			if (dbg->gpio && dbg->update_pin != UINT8_MAX) {
+				gpio_pin_set(dbg->gpio, dbg->update_pin, 1);
 			}
-			for (i = 0; i < KP_CAP_CH_NUM; i++) {
-				if (kp_cap_ch_dbg_gpio_list[i] != NULL) {
+			for (i = 0; dbg->gpio && i < KP_CAP_CH_NUM; i++) {
+				if (dbg->cap_pin_list[i] != UINT8_MAX) {
 					gpio_pin_set(
-						kp_cap_ch_dbg_gpio_list[i],
-						kp_cap_ch_dbg_pin_list[i],
+						dbg->gpio,
+						dbg->cap_pin_list[i],
 						1
 					);
 				}
@@ -131,9 +108,8 @@ kp_cap_isr(void *arg)
 			/* Disable all the interrupts */
 			kp_cap_timer->DIER = 0;
 			/* Lower the debugging pin, if any */
-			if (kp_cap_dbg_gpio != NULL) {
-				gpio_pin_set(kp_cap_dbg_gpio,
-					     kp_cap_dbg_pin, 0);
+			if (dbg->gpio && dbg->update_pin != UINT8_MAX) {
+				gpio_pin_set(dbg->gpio, dbg->update_pin, 0);
 			}
 			/* Prepare to signal the capture is done */
 			done = true;
@@ -142,13 +118,13 @@ kp_cap_isr(void *arg)
 			uint32_t new_ccif_mask = ccif_mask & kp_cap_timer->DIER;
 
 			/* Lower debugging GPIO pins, if specified */
-			for (i = 0; i < KP_CAP_CH_NUM; i++) {
-				if (kp_cap_ch_dbg_gpio_list[i] != NULL &&
+			for (i = 0; dbg->gpio && i < KP_CAP_CH_NUM; i++) {
+				if (dbg->cap_pin_list[i] != UINT8_MAX &&
 				    (kp_cap_ch_ccif_mask_list[i] &
-					new_ccif_mask)) {
+				     new_ccif_mask)) {
 					gpio_pin_set(
-						kp_cap_ch_dbg_gpio_list[i],
-						kp_cap_ch_dbg_pin_list[i],
+						dbg->gpio,
+						dbg->cap_pin_list[i],
 						0
 					);
 				}
@@ -237,14 +213,9 @@ kp_cap_start(const struct kp_cap_conf *conf, enum kp_cap_dirs dirs)
 					: LL_TIM_IC_POLARITY_FALLING)
 			);
 			LL_TIM_CC_EnableChannel(kp_cap_timer, ch_mask);
-			/* Record debug GPIO device and pin, if any */
-			kp_cap_ch_dbg_gpio_list[i] = ch_conf->dbg_gpio;
-			kp_cap_ch_dbg_pin_list[i] = ch_conf->dbg_pin;
 		} else {
 			/* Disable the capture */
 			LL_TIM_CC_DisableChannel(kp_cap_timer, ch_mask);
-			/* Clear debug GPIO device */
-			kp_cap_ch_dbg_gpio_list[i] = NULL;
 		}
 	}
 
@@ -494,9 +465,7 @@ kp_cap_is_initialized(void)
 }
 
 void
-kp_cap_init(TIM_TypeDef* timer,
-	    const struct device *dbg_gpio,
-	    gpio_pin_t dbg_pin)
+kp_cap_init(TIM_TypeDef* timer, const struct kp_cap_dbg_conf *dbg_conf)
 {
 	assert(!kp_cap_is_initialized());
 	assert(timer != NULL);
@@ -504,9 +473,12 @@ kp_cap_init(TIM_TypeDef* timer,
 	/* Remember the timer we're using */
 	kp_cap_timer = timer;
 
-	/* Record debug GPIO device and pin, if any */
-	kp_cap_dbg_gpio = dbg_gpio;
-	kp_cap_dbg_pin = dbg_pin;
+	/* Remember debug output configuration */
+	if (dbg_conf == NULL) {
+		kp_cap_dbg_conf.gpio = NULL;
+	} else {
+		memcpy(&kp_cap_dbg_conf, dbg_conf, sizeof(kp_cap_dbg_conf));
+	}
 
 	/* Set update interrupt generation for overflow/underflow only */
 	LL_TIM_SetUpdateSource(kp_cap_timer, LL_TIM_UPDATESOURCE_COUNTER);
