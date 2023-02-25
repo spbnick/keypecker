@@ -748,8 +748,7 @@ kp_sample(int32_t target, enum kp_cap_dir dir,
 	/* Start the capture, if requested */
 	if (capturing) {
 		kp_cap_start(kp_cap_ch_conf_list, ch_num, dir,
-				kp_cap_timeout_us, kp_cap_bounce_us,
-				kp_dbg_gpio, kp_dbg_pin_update);
+				kp_cap_timeout_us, kp_cap_bounce_us);
 	} else {
 		events[EVENT_IDX_CAP_FINISH].type = K_POLL_TYPE_IGNORE;
 	}
@@ -2098,5 +2097,6 @@ main(void)
 		    DT_IRQ_BY_NAME(KP_TIMER_NODE, cc, priority),
 		    kp_cap_isr, NULL, 0);
 	irq_enable(DT_IRQ_BY_NAME(KP_TIMER_NODE, cc, irq));
-	kp_cap_init((TIM_TypeDef *)DT_REG_ADDR(KP_TIMER_NODE));
+	kp_cap_init((TIM_TypeDef *)DT_REG_ADDR(KP_TIMER_NODE),
+		    kp_dbg_gpio, kp_dbg_pin_update);
 }

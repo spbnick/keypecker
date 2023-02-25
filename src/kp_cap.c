@@ -40,6 +40,19 @@ static const size_t kp_cap_ch_ccr_offset_list[KP_CAP_CH_NUM] = {
 /** The timer to use for capture */
 static TIM_TypeDef* kp_cap_timer = NULL;
 
+/**
+ * GPIO port to use for update interrupt debugging, or NULL for none.
+ * Must be configured if specified.
+ */
+static const struct device *kp_cap_dbg_gpio;
+
+/**
+ * The GPIO pin to use for update interrupt debugging.
+ * Set high at the trigger, set low on update.
+ * Only valid if kp_cap_dbg_gpio is not NULL. Must be configured.
+ */
+static gpio_pin_t kp_cap_dbg_pin;
+
 /** The semaphore signaling a capture can be started */
 static K_SEM_DEFINE(kp_cap_available, 1, 1);
 
@@ -57,19 +70,6 @@ static volatile bool kp_cap_aborted;
 
 /** The semaphore signaling a capture is done */
 static K_SEM_DEFINE(kp_cap_done, 0, 1);
-
-/**
- * GPIO port to use for update interrupt debugging, or NULL for none.
- * Must be configured if specified.
- */
-static const struct device *kp_cap_dbg_gpio;
-
-/**
- * The GPIO pin to use for update interrupt debugging.
- * Set high at the trigger, set low on update.
- * Only valid if kp_cap_dbg_gpio is not NULL. Must be configured.
- */
-static gpio_pin_t kp_cap_dbg_pin;
 
 /**
  * The GPIO port to use for capture interrupt debugging for each channel.
@@ -185,9 +185,7 @@ kp_cap_isr(void *arg)
 void
 kp_cap_start(const struct kp_cap_ch_conf *ch_conf_list,
 		size_t ch_conf_num, enum kp_cap_dir dir,
-		uint32_t timeout_us, uint32_t bounce_us,
-		const struct device *dbg_gpio,
-		gpio_pin_t dbg_pin)
+		uint32_t timeout_us, uint32_t bounce_us)
 {
 	size_t i;
 	const struct kp_cap_ch_conf *ch_conf;
@@ -258,10 +256,6 @@ kp_cap_start(const struct kp_cap_ch_conf *ch_conf_list,
 	LL_TIM_SetAutoReload(kp_cap_timer,
 			     kp_cap_timeout_ticks +
 			     kp_cap_bounce_ticks);
-
-	/* Record debug GPIO device and pin, if any */
-	kp_cap_dbg_gpio = dbg_gpio;
-	kp_cap_dbg_pin = dbg_pin;
 
 	/* Setup the trigger to start (but not stop) counting */
 	LL_TIM_SetSlaveMode(kp_cap_timer, LL_TIM_SLAVEMODE_TRIGGER);
@@ -486,13 +480,19 @@ kp_cap_is_initialized(void)
 }
 
 void
-kp_cap_init(TIM_TypeDef* timer)
+kp_cap_init(TIM_TypeDef* timer,
+	    const struct device *dbg_gpio,
+	    gpio_pin_t dbg_pin)
 {
 	assert(!kp_cap_is_initialized());
 	assert(timer != NULL);
 
 	/* Remember the timer we're using */
 	kp_cap_timer = timer;
+
+	/* Record debug GPIO device and pin, if any */
+	kp_cap_dbg_gpio = dbg_gpio;
+	kp_cap_dbg_pin = dbg_pin;
 
 	/* Set update interrupt generation for overflow/underflow only */
 	LL_TIM_SetUpdateSource(kp_cap_timer, LL_TIM_UPDATESOURCE_COUNTER);
