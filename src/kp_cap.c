@@ -173,6 +173,46 @@ kp_cap_conf_ch_num(const struct kp_cap_conf *conf, enum kp_cap_dirs dirs)
 	return dir_ch_num;
 }
 
+size_t
+kp_cap_conf_ch_res_off(const struct kp_cap_conf *conf, bool even_down,
+		       size_t pass, size_t ch)
+{
+	const bool odd_pass = pass & 1;
+	/* Number of channel results per round (two passes) */
+	size_t round_ch_res_num = 0;
+	/* Channel result offset in this pass */
+	size_t pass_ch_res_off = 0;
+	size_t i;
+
+	assert(kp_cap_conf_is_valid(conf));
+	assert((even_down & 1) == even_down);
+	assert(ch < ARRAY_SIZE(conf->ch_list));
+
+	for (i = 0; i < ARRAY_SIZE(conf->ch_list); i++) {
+		enum kp_cap_dirs dirs = conf->ch_list[i].dirs;
+
+		if (dirs) {
+			round_ch_res_num++;
+		}
+		/* If this is an odd pass */
+		if (odd_pass) {
+			/*
+			 * If the channel is enabled in the previous
+			 * (even) pass
+			 */
+			if (dirs & kp_cap_dirs_from_down(even_down)) {
+				pass_ch_res_off++;
+			}
+		}
+		/* If the channel is enabled in this pass */
+		if (i < ch &&
+		    (dirs & kp_cap_dirs_from_down(even_down ^ odd_pass))) {
+			pass_ch_res_off++;
+		}
+	}
+	return round_ch_res_num * (pass >> 1) + pass_ch_res_off;
+}
+
 void
 kp_cap_start(const struct kp_cap_conf *conf, enum kp_cap_dirs dirs)
 {

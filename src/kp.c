@@ -399,58 +399,6 @@ static struct kp_cap_conf kp_cap_conf;
 /* List of channel capture results */
 static struct kp_cap_ch_res kp_cap_ch_res_list[512 * KP_CAP_CH_NUM];
 
-/**
- * Calculate the offset of a channel capture result in a flat result array,
- * for specified configuration, current pass number, the direction of even
- * passes, and the channel number.
- *
- * @param conf		The configuration the capture was done with.
- * @param even_down	True if even passes are directed down, false if up.
- * @param pass		The index of the pass the channel result is in.
- * @param ch		The index of the channel to get offset for, within the
- *			pass. Must be less than the number of channels in the
- *			configuration.
- */
-static inline size_t
-kp_cap_conf_ch_res_off(const struct kp_cap_conf *conf, bool even_down,
-		       size_t pass, size_t ch)
-{
-	const bool odd_pass = pass & 1;
-	/* Number of channel results per round (two passes) */
-	size_t round_ch_res_num = 0;
-	/* Channel result offset in this pass */
-	size_t pass_ch_res_off = 0;
-	size_t i;
-
-	assert(kp_cap_conf_is_valid(conf));
-	assert((even_down & 1) == even_down);
-	assert(ch < ARRAY_SIZE(conf->ch_list));
-
-	for (i = 0; i < ARRAY_SIZE(conf->ch_list); i++) {
-		enum kp_cap_dirs dirs = conf->ch_list[i].dirs;
-
-		if (dirs) {
-			round_ch_res_num++;
-		}
-		/* If this is an odd pass */
-		if (odd_pass) {
-			/*
-			 * If the channel is enabled in the previous
-			 * (even) pass
-			 */
-			if (dirs & kp_cap_dirs_from_down(even_down)) {
-				pass_ch_res_off++;
-			}
-		}
-		/* If the channel is enabled in this pass */
-		if (i < ch &&
-		    (dirs & kp_cap_dirs_from_down(even_down ^ odd_pass))) {
-			pass_ch_res_off++;
-		}
-	}
-	return round_ch_res_num * (pass >> 1) + pass_ch_res_off;
-}
-
 /** Execute the
  * "set ch <idx> none/up/down/both [rising/falling [<name>]]"
  * command */

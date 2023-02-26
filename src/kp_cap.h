@@ -384,6 +384,23 @@ extern size_t kp_cap_conf_ch_num(const struct kp_cap_conf *conf,
 				 enum kp_cap_dirs dirs);
 
 /**
+ * Calculate the offset of a channel capture result in a flat result array,
+ * for specified configuration, current pass number, the direction of even
+ * passes, and the channel number.
+ *
+ * @param conf		The configuration the capture was done with.
+ * @param even_down	True if even passes are directed down, false if up.
+ * @param pass		The index of the pass the channel result is in.
+ * @param ch		The index of the channel to get offset for, within the
+ *			pass. Must be less than the number of channels in the
+ *			configuration.
+ */
+extern size_t kp_cap_conf_ch_res_off(const struct kp_cap_conf *conf,
+				     bool even_down,
+				     size_t pass,
+				     size_t ch);
+
+/**
  * Start capture, waiting for the previous one to finish first.
  *
  * @param conf	Capture configuration to use.
