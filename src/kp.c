@@ -1653,7 +1653,7 @@ kp_cmd_measure(const struct shell *shell, size_t argc, char **argv)
 	}
 
 	/* Check that we have enough memory to record all passes */
-	i = kp_cap_conf_ch_res_off(&kp_cap_conf, even_down, passes, 0);
+	i = kp_cap_conf_ch_res_idx(&kp_cap_conf, even_down, passes, 0);
 	if (i >= ARRAY_SIZE(kp_cap_ch_res_list)) {
 		shell_error(
 			shell,

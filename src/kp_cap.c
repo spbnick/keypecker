@@ -174,14 +174,14 @@ kp_cap_conf_ch_num(const struct kp_cap_conf *conf, enum kp_cap_dirs dirs)
 }
 
 size_t
-kp_cap_conf_ch_res_off(const struct kp_cap_conf *conf, bool even_down,
+kp_cap_conf_ch_res_idx(const struct kp_cap_conf *conf, bool even_down,
 		       size_t pass, size_t ch)
 {
 	const bool odd_pass = pass & 1;
 	/* Number of channel results per round (two passes) */
 	size_t round_ch_res_num = 0;
-	/* Channel result offset in this pass */
-	size_t pass_ch_res_off = 0;
+	/* Channel result index in this pass */
+	size_t pass_ch_res_idx = 0;
 	size_t i;
 
 	assert(kp_cap_conf_is_valid(conf));
@@ -201,16 +201,16 @@ kp_cap_conf_ch_res_off(const struct kp_cap_conf *conf, bool even_down,
 			 * (even) pass
 			 */
 			if (dirs & kp_cap_dirs_from_down(even_down)) {
-				pass_ch_res_off++;
+				pass_ch_res_idx++;
 			}
 		}
 		/* If the channel is enabled in this pass */
 		if (i < ch &&
 		    (dirs & kp_cap_dirs_from_down(even_down ^ odd_pass))) {
-			pass_ch_res_off++;
+			pass_ch_res_idx++;
 		}
 	}
-	return round_ch_res_num * (pass >> 1) + pass_ch_res_off;
+	return round_ch_res_num * (pass >> 1) + pass_ch_res_idx;
 }
 
 void
