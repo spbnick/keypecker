@@ -191,7 +191,10 @@ kp_cap_conf_ch_res_idx(const struct kp_cap_conf *conf, bool even_down,
 	for (i = 0; i < ARRAY_SIZE(conf->ch_list); i++) {
 		enum kp_cap_dirs dirs = conf->ch_list[i].dirs;
 
-		if (dirs) {
+		if (dirs & KP_CAP_DIRS_UP) {
+			round_ch_res_num++;
+		}
+		if (dirs & KP_CAP_DIRS_DOWN) {
 			round_ch_res_num++;
 		}
 		/* If this is an odd pass */
