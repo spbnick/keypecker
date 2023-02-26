@@ -12,6 +12,7 @@
 #include "kp_act.h"
 #include "kp_shell.h"
 #include "kp_input.h"
+#include "kp_sample.h"
 #include "kp_misc.h"
 #include <stm32_ll_tim.h>
 #include <assert.h>
@@ -733,220 +734,6 @@ SHELL_STATIC_SUBCMD_SET_CREATE(get_subcmds,
 SHELL_CMD_REGISTER(get, &get_subcmds,
 			"Get parameters", NULL);
 
-/** Sampling result code */
-enum kp_sample_rc {
-	/* Success */
-	KP_SAMPLE_RC_OK,
-	/* Aborted */
-	KP_SAMPLE_RC_ABORTED,
-	/* Actuator is off */
-	KP_SAMPLE_RC_OFF,
-};
-
-/**
- * Sample captured channels for a specified movement.
- *
- * @param target	The absolute actuator position to move to.
- * 			If invalid, no movement will be done.
- * @param conf		The capture configuration to use.
- * 			If NULL, no capture will be done, or waited for,
- * 			nor any results will be output.
- * @param dirs		The capture movement directions.
- * 			If KP_CAP_DIRS_NONE, no capture will be done, or waited
- * 			for, nor any results will be output.
- * @param ch_res_list	Location for channel capture results.
- * 			Only results for channels enabled in the
- * 			capture configuration for the specified directions (as
- * 			counted by kp_cap_conf_ch_num()) will be output.
- * 			Can be NULL, if ch_res_num is zero.
- * @param ch_res_num	Maximum number of channel results to output into
- *			"ch_res_list".
- *
- * @return Result code.
- */
-static enum kp_sample_rc
-kp_sample(int32_t target,
-	  const struct kp_cap_conf *conf,
-	  enum kp_cap_dirs dirs,
-	  struct kp_cap_ch_res *ch_res_list,
-	  size_t ch_res_num)
-{
-	/* Poll event indices */
-	enum {
-		EVENT_IDX_INPUT = 0,
-		EVENT_IDX_ACT_FINISH_MOVE,
-		EVENT_IDX_CAP_FINISH,
-		EVENT_NUM
-	};
-	struct k_poll_event events[EVENT_NUM];
-	enum kp_act_move_rc move_rc = KP_ACT_MOVE_RC_OK;
-	enum kp_cap_rc cap_rc = KP_CAP_RC_OK;
-	const bool moving = kp_act_pos_is_valid(target);
-	const bool capturing = (conf != NULL) && (dirs != KP_CAP_DIRS_NONE);
-	bool moved = false;
-	bool captured = false;
-	enum kp_input_msg msg;
-	size_t i;
-
-	assert(conf == NULL || kp_cap_conf_is_valid(conf));
-	assert(ch_res_list != NULL || ch_res_num == 0);
-
-	/* Initialize events */
-	kp_input_get_event_init(&events[EVENT_IDX_INPUT]);
-	kp_act_finish_move_event_init(&events[EVENT_IDX_ACT_FINISH_MOVE]);
-	kp_cap_finish_event_init(&events[EVENT_IDX_CAP_FINISH]);
-
-	/* Start the capture, if requested */
-	if (capturing) {
-		kp_cap_start(conf, dirs);
-	} else {
-		events[EVENT_IDX_CAP_FINISH].type = K_POLL_TYPE_IGNORE;
-	}
-
-	/* Start moving towards the target, if requested */
-	if (moving) {
-		kp_act_start_move_to(target, kp_act_speed);
-	} else {
-		events[EVENT_IDX_ACT_FINISH_MOVE].type = K_POLL_TYPE_IGNORE;
-	}
-
-	/* Move and capture */
-	for (; (moving && !moved) || (capturing && !captured);) {
-		while (k_poll(events, ARRAY_SIZE(events), K_FOREVER) != 0);
-
-		/* Handle input */
-		if (events[EVENT_IDX_INPUT].state) {
-			while (kp_input_get(&msg, K_FOREVER) != 0);
-			if (msg == KP_INPUT_MSG_ABORT) {
-				if (moving) {
-					kp_act_abort();
-				}
-				if (capturing) {
-					kp_cap_abort();
-				}
-			}
-		}
-
-		/* Handle movement completion */
-		if (events[EVENT_IDX_ACT_FINISH_MOVE].state) {
-			move_rc = kp_act_finish_move(K_FOREVER);
-			moved = true;
-		}
-
-		/* Handle capture completion */
-		if (events[EVENT_IDX_CAP_FINISH].state) {
-			cap_rc = kp_cap_finish(ch_res_list, ch_res_num,
-					       K_FOREVER);
-			captured = true;
-		}
-
-		/* Reset event state */
-		for (i = 0; i < ARRAY_SIZE(events); i++) {
-			events[i].state = K_POLL_STATE_NOT_READY;
-		}
-	}
-
-	if (move_rc == KP_ACT_MOVE_RC_ABORTED ||
-			cap_rc == KP_CAP_RC_ABORTED) {
-		return KP_SAMPLE_RC_ABORTED;
-	}
-	if (move_rc == KP_ACT_MOVE_RC_OFF) {
-		return KP_SAMPLE_RC_OFF;
-	}
-	assert(move_rc == KP_ACT_MOVE_RC_OK);
-	assert(cap_rc == KP_CAP_RC_OK);
-
-	return KP_SAMPLE_RC_OK;
-}
-
-/**
- * Count the number of all-enabled-channel triggers for a number of passes
- * over a range of actuator positions.
- *
- * @param top		The top position of the range.
- * @param bottom	The bottom position of the range.
- * @param passes	Number of actuator passes to execute.
- * @param ptriggers	Location for the number of triggered passes.
- * 			Can be NULL to have the number discarded.
- *
- * @return Sampling result code.
- */
-static enum kp_sample_rc
-kp_check(int32_t top, int32_t bottom, size_t passes, size_t *ptriggers)
-{
-	struct kp_cap_ch_res ch_res_list[KP_CAP_CH_NUM];
-	enum kp_sample_rc rc = KP_CAP_RC_OK;
-	int32_t pos;
-	bool even_down;
-	size_t pass;
-	size_t captured_pass;
-	size_t triggers = 0;
-	size_t i;
-	size_t captured_channels;
-	size_t triggered_channels;
-
-	assert(kp_act_pos_is_valid(top));
-	assert(kp_act_pos_is_valid(bottom));
-	assert(kp_cap_conf_ch_num(&kp_cap_conf, KP_CAP_DIRS_BOTH) > 0);
-
-	if (passes == 0) {
-		goto finish;
-	}
-
-	/* Move to the closest boundary without capturing */
-	pos = kp_act_locate();
-	if (!kp_act_pos_is_valid(pos)) {
-		return KP_SAMPLE_RC_OFF;
-	}
-	even_down = abs(pos - kp_act_pos_top) < abs(pos - kp_act_pos_bottom);
-	rc = kp_sample(even_down ? kp_act_pos_top : kp_act_pos_bottom,
-		       NULL, KP_CAP_DIRS_NONE, NULL, 0);
-	if (rc != KP_SAMPLE_RC_OK) {
-		return rc;
-	}
-
-	for (pass = 0, captured_pass = 0; captured_pass < passes; pass++) {
-		enum kp_cap_dirs dirs =
-			kp_cap_dirs_from_down(even_down ^ (pass & 1));
-		/* Capture moving to the opposite boundary */
-		rc = kp_sample(
-			(dirs == KP_CAP_DIRS_DOWN) ? bottom : top,
-			&kp_cap_conf, dirs,
-			ch_res_list, ARRAY_SIZE(ch_res_list)
-		);
-		if (rc != KP_SAMPLE_RC_OK) {
-			return rc;
-		}
-
-		/* Check if any and all captured channels triggered */
-		for (i = 0, captured_channels = 0, triggered_channels = 0;
-		     i < ARRAY_SIZE(kp_cap_conf.ch_list); i++) {
-			/* If the channel is enabled in this direction */
-			if (kp_cap_conf.ch_list[i].dirs & dirs) {
-				if (ch_res_list[captured_channels].status !=
-						KP_CAP_CH_STATUS_TIMEOUT) {
-					triggered_channels++;
-				}
-				captured_channels++;
-			}
-		}
-		if (captured_channels > 0) {
-			captured_pass++;
-			if (triggered_channels == captured_channels) {
-				triggers++;
-			}
-		}
-	}
-
-finish:
-
-	if (ptriggers != NULL) {
-		*ptriggers = triggers;
-	}
-
-	return KP_SAMPLE_RC_OK;
-}
-
 /** Execute the "check" command */
 static int
 kp_cmd_check(const struct shell *shell, size_t argc, char **argv)
@@ -1001,8 +788,9 @@ kp_cmd_check(const struct shell *shell, size_t argc, char **argv)
 	start = kp_act_locate();
 
 	/* Count the triggers */
-	switch (kp_check(kp_act_pos_top, kp_act_pos_bottom,
-				(size_t)passes, &triggers)) {
+	switch (kp_sample_check(kp_act_pos_top, kp_act_pos_bottom,
+				kp_act_speed, (size_t)passes,
+				&kp_cap_conf, &triggers)) {
 		case KP_SAMPLE_RC_OK:
 			break;
 		case KP_SAMPLE_RC_ABORTED:
@@ -1134,11 +922,12 @@ kp_cmd_tighten(const struct shell *shell, size_t argc, char **argv)
 	/* Remember the start position */
 	start = kp_act_locate();
 
-#define CHECK(_top, _bottom, _passes, _ptriggers) \
+#define CHECK(_top, _bottom, _ptriggers) \
 	do {                                                            \
-		assert(_top < _bottom);                                 \
-		assert(_passes > 0);                                    \
-		switch (kp_check(_top, _bottom, _passes, _ptriggers)) { \
+		assert((_top) < (_bottom));                             \
+		switch (kp_sample_check(_top, _bottom, kp_act_speed,    \
+					(size_t)passes, &kp_cap_conf,   \
+					_ptriggers)) {                  \
 			case KP_SAMPLE_RC_OK:                           \
 				break;                                  \
 			case KP_SAMPLE_RC_ABORTED:                      \
@@ -1156,7 +945,7 @@ kp_cmd_tighten(const struct shell *shell, size_t argc, char **argv)
 	} while (0)
 
 	while (true) {
-		CHECK(next_top, next_bottom, (size_t)passes, &triggers);
+		CHECK(next_top, next_bottom, &triggers);
 		/* If we don't have reliable triggers */
 		if (triggers < (size_t)passes) {
 			/* If we tried the top half just now */
@@ -1189,14 +978,13 @@ kp_cmd_tighten(const struct shell *shell, size_t argc, char **argv)
 		/* Try top-aligned range */
 		next_top = top;
 		next_bottom = top + steps;
-		CHECK(next_top, next_bottom, (size_t)passes, &triggers);
+		CHECK(next_top, next_bottom, &triggers);
 		/* If that didn't work */
 		if (triggers < (size_t)passes) {
 			/* Try bottom-aligned range */
 			next_top = bottom - steps;
 			next_bottom = bottom;
-			CHECK(next_top, next_bottom,
-					(size_t)passes, &triggers);
+			CHECK(next_top, next_bottom, &triggers);
 			/* If even that didn't work */
 			if (triggers < (size_t)passes) {
 				/* Give up */
@@ -1930,7 +1718,7 @@ kp_cmd_measure(const struct shell *shell, size_t argc, char **argv)
 
 	/* Move to the closest boundary without capturing */
 	rc = kp_sample(even_down ? kp_act_pos_top : kp_act_pos_bottom,
-		       NULL, KP_CAP_DIRS_NONE, NULL, 0);
+		       kp_act_speed, NULL, KP_CAP_DIRS_NONE, NULL, 0);
 	if (rc != KP_SAMPLE_RC_OK) {
 		goto finish;
 	}
@@ -1984,7 +1772,7 @@ kp_cmd_measure(const struct shell *shell, size_t argc, char **argv)
 		rc = kp_sample(
 			dir == KP_CAP_DIRS_DOWN ? kp_act_pos_bottom
 						: kp_act_pos_top,
-			&kp_cap_conf, dir, ch_res, ch_res_rem
+			kp_act_speed, &kp_cap_conf, dir, ch_res, ch_res_rem
 		);
 		if (rc != KP_SAMPLE_RC_OK) {
 			goto finish;
