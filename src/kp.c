@@ -237,7 +237,8 @@ kp_cmd_swing(const struct shell *shell, size_t argc, char **argv)
 		steps = -steps;
 		kp_act_start_move_by(steps, kp_act_speed);
 		while (rc == KP_ACT_MOVE_RC_OK && !moved) {
-			while (k_poll(events, ARRAY_SIZE(events), K_FOREVER) != 0);
+			while (k_poll(events, ARRAY_SIZE(events),
+				      K_FOREVER) != 0);
 
 			if (events[EVENT_IDX_INPUT].state) {
 				while (kp_input_get(&msg, K_FOREVER) != 0);
@@ -495,7 +496,8 @@ kp_cmd_set_timeout(const struct shell *shell, size_t argc, char **argv)
 		shell_error(shell, "Invalid timeout: %s", argv[1]);
 		return 1;
 	}
-	if ((uint32_t)timeout_us + kp_cap_conf.bounce_us >= KP_CAP_TIME_MAX_US) {
+	if ((uint32_t)timeout_us + kp_cap_conf.bounce_us >=
+	    KP_CAP_TIME_MAX_US) {
 		shell_error(
 			shell,
 			"Timeout plus bounce time exceed "
@@ -520,7 +522,8 @@ kp_cmd_set_bounce(const struct shell *shell, size_t argc, char **argv)
 		shell_error(shell, "Invalid bounce time: %s", argv[1]);
 		return 1;
 	}
-	if (kp_cap_conf.timeout_us + (uint32_t)bounce_us >= KP_CAP_TIME_MAX_US) {
+	if (kp_cap_conf.timeout_us + (uint32_t)bounce_us >=
+	    KP_CAP_TIME_MAX_US) {
 		shell_error(
 			shell,
 			"Bounce time plus timeout exceed "
@@ -1036,7 +1039,8 @@ kp_cmd_measure_output_stats(
 	const size_t metric_num = ARRAY_SIZE(metric_names);
 	uint32_t metric_data[metric_num][KP_CAP_CH_NUM][KP_CAP_NE_DIRS_NUM];
 	/* NOTE: Code below expects triggers to occupy index zero */
-	uint32_t (*triggers)[KP_CAP_CH_NUM][KP_CAP_NE_DIRS_NUM] = &metric_data[0];
+	uint32_t (*triggers)[KP_CAP_CH_NUM][KP_CAP_NE_DIRS_NUM] =
+							&metric_data[0];
 	uint32_t (*min)[KP_CAP_CH_NUM][KP_CAP_NE_DIRS_NUM] = &metric_data[1];
 	uint32_t (*max)[KP_CAP_CH_NUM][KP_CAP_NE_DIRS_NUM] = &metric_data[2];
 	uint32_t (*mean)[KP_CAP_CH_NUM][KP_CAP_NE_DIRS_NUM] = &metric_data[3];
@@ -1137,7 +1141,9 @@ kp_cmd_measure_output_stats(
 					: ((passes >> 1) +
 					   (passes &
 					    (enabled_dirs ==
-					     kp_cap_dirs_from_down(even_down)))));
+					     kp_cap_dirs_from_down(
+						even_down
+					     )))));
 		}
 	}
 
@@ -1232,7 +1238,8 @@ kp_cmd_measure_output_histogram(
 #define CHAR_NUM (KP_CAP_CH_NAME_MAX_LEN - 1)
 	uint32_t min, max;
 	uint32_t step_size;
-	size_t step_passes[KP_CAP_CH_NUM][KP_CAP_NE_DIRS_NUM][STEP_NUM] = {{{0, }}};
+	size_t step_passes[KP_CAP_CH_NUM][KP_CAP_NE_DIRS_NUM]
+				[STEP_NUM] = {{{0, }}};
 	size_t max_step_passes[KP_CAP_CH_NUM][KP_CAP_NE_DIRS_NUM] = {{0, }};
 	size_t ch, pass;
 	enum kp_cap_ne_dirs ne_dirs;
@@ -1317,7 +1324,8 @@ kp_cmd_measure_output_histogram(
 				}
 				step_passes[ch][ne_dirs][step_idx] =
 					step_passes[ch][ne_dirs][step_idx] *
-					CHAR_NUM / max_step_passes[ch][ne_dirs];
+					CHAR_NUM /
+					max_step_passes[ch][ne_dirs];
 			}
 		}
 	}
@@ -1370,7 +1378,7 @@ kp_cmd_measure_output_histogram(
 			}
 			/* Output histogram bars per channel */
 			for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
-				/* If channel is not enabled in this direction */
+				/* If channel direction is not enabled */
 				if (!(conf->ch_list[ch].dirs &
 				      kp_cap_dirs_from_ne(ne_dirs))) {
 					/* If channel is enabled */
@@ -1383,7 +1391,8 @@ kp_cmd_measure_output_histogram(
 					? step_passes[ch][ne_dirs][step_idx]
 					: 0;
 				next_chars = (step_idx < STEP_NUM - 1)
-					? step_passes[ch][ne_dirs][step_idx + 1]
+					? step_passes[ch][ne_dirs]
+							[step_idx + 1]
 					: 0;
 				/* For each character in the column buffer */
 				for (char_idx = 0; char_idx <= CHAR_NUM;
