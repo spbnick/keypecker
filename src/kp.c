@@ -13,6 +13,7 @@
 #include "kp_shell.h"
 #include "kp_input.h"
 #include "kp_sample.h"
+#include "kp_table.h"
 #include "kp_misc.h"
 #include <stm32_ll_tim.h>
 #include <assert.h>
@@ -1000,143 +1001,11 @@ SHELL_CMD_ARG_REGISTER(tighten, NULL,
 			"specified number of passes (default 4).",
 			kp_cmd_tighten, 1, 2);
 
-/** Format string for the first column of "measure" command output */
-static char kp_cmd_measure_col0_fmt[16] = {0, };
-/** Format string for successive columns of "measure" command output */
-static char kp_cmd_measure_coln_fmt[16] = {0, };
-/** Width of the first column of "measure" command output */
-#define KP_CMD_MEASURE_COL0_WIDTH	(KP_CAP_TIME_MAX_DIGITS + 1)
-/** Width of successive columns of "measure" command output */
-#define KP_CMD_MEASURE_COLN_WIDTH	KP_CAP_CH_NAME_MAX_LEN
-/** Size of the column buffer for "measure" command output */
-#define KP_CMD_MEASURE_COL_BUF_SIZE \
-	(MAX(KP_CMD_MEASURE_COL0_WIDTH, KP_CMD_MEASURE_COLN_WIDTH + 1) + 1)
-
-/** Initialize the global state of "measure" command output */
-static void
-kp_cmd_measure_output_setup(void)
-{
-	int rc;
-	rc = snprintf(kp_cmd_measure_col0_fmt,
-		      sizeof(kp_cmd_measure_col0_fmt),
-		      "%%%zu.%zus",
-		      KP_CMD_MEASURE_COL0_WIDTH, KP_CMD_MEASURE_COL0_WIDTH);
-	assert(rc >= 0);
-	assert(rc < sizeof(kp_cmd_measure_col0_fmt));
-	rc = snprintf(kp_cmd_measure_coln_fmt,
-		      sizeof(kp_cmd_measure_coln_fmt),
-		      " %%%zu.%zus",
-		      KP_CMD_MEASURE_COLN_WIDTH, KP_CMD_MEASURE_COLN_WIDTH);
-	assert(rc >= 0);
-	assert(rc < sizeof(kp_cmd_measure_coln_fmt));
-}
-
-/** The "measure" command output state */
-struct kp_cmd_measure_output {
-	/** The shell to output to */
-	const struct shell *shell;
-	/** The number of columns to output */
-	size_t col_num;
-	/** The index of the next column to output */
-	size_t col_idx;
-	/** The column formatting buffer */
-	char col_buf[KP_CMD_MEASURE_COL_BUF_SIZE];
-};
-
-/**
- * Initializer for a measure output state
- *
- * @param _shell	The shell to output to.
- * @param _col_num	Number of columns to output.
- */
-#define KP_CMD_MEASURE_OUTPUT_INIT(_shell, _col_num) \
-	(struct kp_cmd_measure_output){     \
-		.shell = _shell,            \
-		.col_num = _col_num,        \
-		.col_idx = 0,               \
-		.col_buf = {0, },           \
-	}
-
-/**
- * Print a column to "measure" command output.
- *
- * @param out	The output to print to.
- * @param fmt	The format string to use to format the column.
- * @param ...	The arguments for the format string.
- */
-static void
-kp_cmd_measure_output_col(struct kp_cmd_measure_output *out,
-			  const char *restrict fmt, ...)
-{
-	va_list args;
-	int rc;
-
-	assert(out != NULL);
-	assert(out->col_idx < out->col_num);
-	assert(fmt != NULL);
-
-	va_start(args, fmt);
-	rc = vsnprintf(out->col_buf, sizeof(out->col_buf), fmt, args);
-	va_end(args);
-
-	assert(rc >= 0);
-	assert(rc < sizeof(out->col_buf));
-
-	shell_fprintf(out->shell, SHELL_NORMAL,
-		      (out->col_idx == 0 ? kp_cmd_measure_col0_fmt
-				     : kp_cmd_measure_coln_fmt),
-		      out->col_buf);
-	out->col_idx++;
-}
-
-/**
- * Print a newline to "measure" command output.
- *
- * @param out	The output to print to.
- */
-static void
-kp_cmd_measure_output_nl(struct kp_cmd_measure_output *out)
-{
-	assert(out != NULL);
-	assert(out->col_idx == 0 || out->col_idx == out->col_num);
-	shell_fprintf(out->shell, SHELL_NORMAL, "\n");
-	out->col_idx = 0;
-}
-
-/**
- * Print a separator line to "measure" command output.
- *
- * @param out		The output to print to.
- */
-static void
-kp_cmd_measure_output_sep(struct kp_cmd_measure_output *out)
-{
-	size_t i;
-
-	assert(out != NULL);
-	assert(out->col_idx == 0);
-
-	memset(out->col_buf, '-', sizeof(out->col_buf) - 1);
-	out->col_buf[sizeof(out->col_buf) - 1] = '\0';
-
-	for (i = 0; i < out->col_num; i++) {
-		shell_fprintf(out->shell, SHELL_NORMAL,
-			      (i == 0 ? kp_cmd_measure_col0_fmt
-				      : kp_cmd_measure_coln_fmt),
-			      out->col_buf);
-	}
-	shell_fprintf(out->shell, SHELL_NORMAL, "\n");
-	out->col_idx = 0;
-}
-
-#define COL(_out, _args...) kp_cmd_measure_output_col(_out, _args)
-#define NL(_out) kp_cmd_measure_output_nl(_out)
-#define SEP(_out) kp_cmd_measure_output_sep(_out)
 
 /**
  * Print basic statistics for "measure" command output.
  *
- * @param out		The output to print to.
+ * @param table		The table output to print to.
  * @param conf		The configuration the capture was done with.
  * @param even_down	True if even passes are directed down, false if up.
  * @param ch_res_list	A list (array) of channel results to summarize.
@@ -1148,7 +1017,7 @@ kp_cmd_measure_output_sep(struct kp_cmd_measure_output *out)
  */
 static void
 kp_cmd_measure_output_stats(
-		struct kp_cmd_measure_output *out,
+		struct kp_table *table,
 		const struct kp_cap_conf *conf,
 		bool even_down,
 		struct kp_cap_ch_res *ch_res_list,
@@ -1177,7 +1046,7 @@ kp_cmd_measure_output_stats(
 	enum kp_cap_ne_dirs ne_dirs;
 	struct kp_cap_ch_res *ch_res;
 
-	assert(out != NULL);
+	assert(table != NULL);
 	assert(kp_cap_conf_is_valid(conf));
 	assert((even_down & 1) == even_down);
 	assert(ch_res_list != NULL);
@@ -1288,20 +1157,22 @@ kp_cmd_measure_output_stats(
 	for (ne_dirs = verbose ? 0 : KP_CAP_NE_DIRS_BOTH;
 			ne_dirs < KP_CAP_NE_DIRS_NUM; ne_dirs++) {
 		/* Output direction header */
-		SEP(out);
-		COL(out, "%s",
-			kp_cap_dirs_to_cpstr(kp_cap_dirs_from_ne(ne_dirs)));
+		kp_table_sep(table);
+		kp_table_col(
+			table, "%s",
+			kp_cap_dirs_to_cpstr(kp_cap_dirs_from_ne(ne_dirs))
+		);
 		for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
 			if (conf->ch_list[ch].dirs) {
-				COL(out, "Value");
+				kp_table_col(table, "Value");
 			}
 		}
-		NL(out);
-		SEP(out);
+		kp_table_nl(table);
+		kp_table_sep(table);
 		/* For each metric */
 		for (metric = 0; metric < metric_num; metric++) {
 			/* Output metric name */
-			COL(out, "%s", metric_names[metric]);
+			kp_table_col(table, "%s", metric_names[metric]);
 			/* For each channel */
 			for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
 				/*
@@ -1312,12 +1183,12 @@ kp_cmd_measure_output_stats(
 				      kp_cap_dirs_from_ne(ne_dirs))) {
 					/* If the channel is enabled */
 					if (conf->ch_list[ch].dirs) {
-						COL(out, "");
+						kp_table_col(table, "");
 					}
 					continue;
 				}
 				/* Output metric value and/or flags */
-				COL(out,
+				kp_table_col(table,
 				    /*
 				     * If it's the trigger percentage
 				     * (at metric index zero),
@@ -1330,7 +1201,7 @@ kp_cmd_measure_output_stats(
 				    timeout[ch][ne_dirs] ? "!" : "",
 				    metric_data[metric][ch][ne_dirs]);
 			}
-			NL(out);
+			kp_table_nl(table);
 		}
 	}
 }
@@ -1338,7 +1209,7 @@ kp_cmd_measure_output_stats(
 /**
  * Print a time histogram for "measure" command output.
  *
- * @param out		The output to print to.
+ * @param table		The table output to print to.
  * @param conf		The configuration the capture was done with.
  * @param even_down	True if even passes are directed down, false if up.
  * @param ch_res_list	A list (array) of channel results to summarize.
@@ -1350,7 +1221,7 @@ kp_cmd_measure_output_stats(
  */
 static void
 kp_cmd_measure_output_histogram(
-		struct kp_cmd_measure_output *out,
+		struct kp_table *table,
 		const struct kp_cap_conf *conf,
 		bool even_down,
 		struct kp_cap_ch_res *ch_res_list,
@@ -1358,7 +1229,7 @@ kp_cmd_measure_output_histogram(
 		bool verbose)
 {
 #define STEP_NUM 16
-#define CHAR_NUM (KP_CMD_MEASURE_COLN_WIDTH - 1)
+#define CHAR_NUM (KP_CAP_CH_NAME_MAX_LEN - 1)
 	uint32_t min, max;
 	uint32_t step_size;
 	size_t step_passes[KP_CAP_CH_NUM][KP_CAP_NE_DIRS_NUM][STEP_NUM] = {{{0, }}};
@@ -1373,7 +1244,7 @@ kp_cmd_measure_output_histogram(
 	size_t chars, next_chars;
 	char c;
 
-	assert(out != NULL);
+	assert(table != NULL);
 	assert(kp_cap_conf_is_valid(conf));
 	assert((even_down & 1) == even_down);
 	assert(ch_res_list != NULL);
@@ -1452,14 +1323,14 @@ kp_cmd_measure_output_histogram(
 	}
 
 	/* Output header */
-	SEP(out);
-	COL(out, "Time");
+	kp_table_sep(table);
+	kp_table_col(table, "Time");
 	for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
 		if (conf->ch_list[ch].dirs) {
-			COL(out, "Triggers");
+			kp_table_col(table, "Triggers");
 		}
 	}
-	NL(out);
+	kp_table_nl(table);
 
 	/*
 	 * Output histograms per each (non-empty) combination of directions
@@ -1468,31 +1339,34 @@ kp_cmd_measure_output_histogram(
 	for (ne_dirs = verbose ? 0 : KP_CAP_NE_DIRS_BOTH;
 			ne_dirs < KP_CAP_NE_DIRS_NUM; ne_dirs++) {
 		/* Output direction header */
-		SEP(out);
-		COL(out, "%s, us",
-			kp_cap_dirs_to_cpstr(kp_cap_dirs_from_ne(ne_dirs)));
+		kp_table_sep(table);
+		kp_table_col(
+			table, "%s, us",
+			kp_cap_dirs_to_cpstr(kp_cap_dirs_from_ne(ne_dirs))
+		);
 		for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
 			/* If channel is not enabled in this direction */
 			if (!(conf->ch_list[ch].dirs &
 			      kp_cap_dirs_from_ne(ne_dirs))) {
 				/* If channel is enabled for a direction */
 				if (conf->ch_list[ch].dirs) {
-					COL(out, "");
+					kp_table_col(table, "");
 				}
 				continue;
 			}
-			COL(out, "0%*zu", CHAR_NUM, max_step_passes[ch][ne_dirs]);
+			kp_table_col(table, "0%*zu",
+				     CHAR_NUM, max_step_passes[ch][ne_dirs]);
 		}
-		NL(out);
+		kp_table_nl(table);
 		/* For each line of histograms (step_num + 2) */
 		for (step_idx = -1, step_min = min - step_size;
 		     step_idx <= STEP_NUM;
 		     step_idx++, step_min += step_size) {
 			/* Output line header value */
 			if (step_idx < 0) {
-				COL(out, "");
+				kp_table_col(table, "");
 			} else {
-				COL(out, "%u", step_min);
+				kp_table_col(table, "%u", step_min);
 			}
 			/* Output histogram bars per channel */
 			for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
@@ -1501,7 +1375,7 @@ kp_cmd_measure_output_histogram(
 				      kp_cap_dirs_from_ne(ne_dirs))) {
 					/* If channel is enabled */
 					if (conf->ch_list[ch].dirs) {
-						COL(out, "");
+						kp_table_col(table, "");
 					}
 					continue;
 				}
@@ -1535,9 +1409,9 @@ kp_cmd_measure_output_histogram(
 					}
 					char_buf[char_idx] = c;
 				}
-				COL(out, "%s", char_buf);
+				kp_table_col(table, "%s", char_buf);
 			}
-			NL(out);
+			kp_table_nl(table);
 		}
 	}
 
@@ -1555,7 +1429,7 @@ kp_cmd_measure(const struct shell *shell, size_t argc, char **argv)
 	size_t i;
 	size_t enabled_ch_num;
 	size_t named_ch_num;
-	struct kp_cmd_measure_output out;
+	struct kp_table table;
 	static struct kp_cap_ch_res *ch_res;
 	size_t ch_res_rem;
 	size_t pass, captured_passes;
@@ -1671,40 +1545,44 @@ kp_cmd_measure(const struct shell *shell, size_t argc, char **argv)
 		goto finish;
 	}
 
-	/* Initialize the output */
-	out = KP_CMD_MEASURE_OUTPUT_INIT(shell, enabled_ch_num + 1);
+	/* Initialize the table output */
+	kp_table_init(&table, shell,
+		      KP_CAP_TIME_MAX_DIGITS + 1,
+		      KP_CAP_CH_NAME_MAX_LEN,
+		      enabled_ch_num + 1);
 
 	/* Output the channel index header */
-	COL(&out, "");
+	kp_table_col(&table, "");
 	for (i = 0; i < ARRAY_SIZE(kp_cap_conf.ch_list); i++) {
 		if (kp_cap_conf.ch_list[i].dirs & dirs) {
-			COL(&out, "#%zu", i);
+			kp_table_col(&table, "#%zu", i);
 		}
 	}
-	NL(&out);
+	kp_table_nl(&table);
 
 	/* Output the channel name header, if any are named */
 	if (named_ch_num != 0) {
-		COL(&out, "");
+		kp_table_col(&table, "");
 		for (i = 0; i < ARRAY_SIZE(kp_cap_conf.ch_list); i++) {
 			if (kp_cap_conf.ch_list[i].dirs & dirs) {
-				COL(&out, "%s", kp_cap_conf.ch_list[i].name);
+				kp_table_col(&table, "%s",
+					     kp_cap_conf.ch_list[i].name);
 			}
 		}
-		NL(&out);
+		kp_table_nl(&table);
 	}
 
 	/* Output timing header, if verbose or doing one pass only */
 	if (verbose || passes == 1) {
-		SEP(&out);
-		COL(&out, "Up/Down");
+		kp_table_sep(&table);
+		kp_table_col(&table, "Up/Down");
 		for (i = 0; i < ARRAY_SIZE(kp_cap_conf.ch_list); i++) {
 			if (kp_cap_conf.ch_list[i].dirs & dirs) {
-				COL(&out, "Time, us");
+				kp_table_col(&table, "Time, us");
 			}
 		}
-		NL(&out);
-		SEP(&out);
+		kp_table_nl(&table);
+		kp_table_sep(&table);
 	}
 
 	/* Capture the requested number of passes */
@@ -1728,7 +1606,7 @@ kp_cmd_measure(const struct shell *shell, size_t argc, char **argv)
 
 		/* Output direction in the first column, if verbose */
 		if (verbose) {
-			COL(&out, kp_cap_dirs_to_cpstr(dir));
+			kp_table_col(&table, "%s", kp_cap_dirs_to_cpstr(dir));
 		}
 
 		/* Count/output channel results */
@@ -1741,7 +1619,7 @@ kp_cmd_measure(const struct shell *shell, size_t argc, char **argv)
 			if (!(kp_cap_conf.ch_list[i].dirs & dir)) {
 				/* Output blank column, if verbose */
 				if (verbose) {
-					COL(&out, "");
+					kp_table_col(&table, "");
 				}
 				/* Skip it */
 				continue;
@@ -1750,16 +1628,18 @@ kp_cmd_measure(const struct shell *shell, size_t argc, char **argv)
 			if (verbose) {
 				switch (ch_res->status) {
 				case KP_CAP_CH_STATUS_TIMEOUT:
-					COL(&out, "!");
+					kp_table_col(&table, "!");
 					break;
 				case KP_CAP_CH_STATUS_OVERCAPTURE:
-					COL(&out, "+%u", ch_res->value_us);
+					kp_table_col(&table, "+%u",
+						     ch_res->value_us);
 					break;
 				case KP_CAP_CH_STATUS_OK:
-					COL(&out, "%u", ch_res->value_us);
+					kp_table_col(&table, "%u",
+						     ch_res->value_us);
 					break;
 				default:
-					COL(&out, "?");
+					kp_table_col(&table, "?");
 					break;
 				}
 			}
@@ -1771,7 +1651,7 @@ kp_cmd_measure(const struct shell *shell, size_t argc, char **argv)
 
 		/* Finish the line, if verbose */
 		if (verbose) {
-			NL(&out);
+			kp_table_nl(&table);
 		}
 
 		captured_passes += captured;
@@ -1779,16 +1659,16 @@ kp_cmd_measure(const struct shell *shell, size_t argc, char **argv)
 
 	if (captured_passes > 1) {
 		kp_cmd_measure_output_stats(
-			&out, &kp_cap_conf, even_down, kp_cap_ch_res_list,
+			&table, &kp_cap_conf, even_down, kp_cap_ch_res_list,
 			passes, verbose
 		);
 		kp_cmd_measure_output_histogram(
-			&out, &kp_cap_conf, even_down, kp_cap_ch_res_list,
+			&table, &kp_cap_conf, even_down, kp_cap_ch_res_list,
 			passes, verbose
 		);
 	}
 
-	SEP(&out);
+	kp_table_sep(&table);
 
 finish:
 
@@ -1827,10 +1707,6 @@ finish:
 	return 0;
 }
 
-#undef SEP
-#undef COL
-#undef NL
-
 SHELL_CMD_ARG_REGISTER(measure, NULL,
 			"Measure timing on all enabled channels for "
 			"specified number of passes (default 1), and output "
@@ -1842,9 +1718,6 @@ main(void)
 {
 	const struct device *dev;
 	size_t i;
-
-	/* Initialize the global state of "measure" command output */
-	kp_cmd_measure_output_setup();
 
 	/* Check shell UART is ready */
 	dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_shell_uart));

@@ -12,4 +12,5 @@ target_sources(
 	src/kp_act.c
 	src/kp_cap.c
 	src/kp_sample.c
+	src/kp_table.c
 )
