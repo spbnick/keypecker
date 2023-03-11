@@ -47,7 +47,7 @@ kp_table_col(struct kp_table *table, const char *restrict fmt, ...)
 	va_list args;
 	int rc;
 
-	assert(table != NULL);
+	assert(kp_table_is_valid(table));
 	assert(table->col_idx < table->col_num);
 	assert(fmt != NULL);
 
@@ -68,7 +68,7 @@ kp_table_col(struct kp_table *table, const char *restrict fmt, ...)
 void
 kp_table_nl(struct kp_table *table)
 {
-	assert(table != NULL);
+	assert(kp_table_is_valid(table));
 	assert(table->col_idx == 0 || table->col_idx == table->col_num);
 	shell_fprintf(table->shell, SHELL_NORMAL, "\n");
 	table->col_idx = 0;
@@ -79,7 +79,7 @@ kp_table_sep(struct kp_table *table)
 {
 	size_t i;
 
-	assert(table != NULL);
+	assert(kp_table_is_valid(table));
 	assert(table->col_idx == 0);
 
 	memset(table->col_buf, '-', sizeof(table->col_buf) - 1);

@@ -13,6 +13,7 @@
 
 #include <zephyr/shell/shell.h>
 #include <zephyr/toolchain.h>
+#include <string.h>
 #include <stdlib.h>
 
 #ifdef __cplusplus
@@ -37,6 +38,22 @@ struct kp_table {
 	/** The column formatting buffer */
 	char col_buf[KP_TABLE_COL_WIDTH_MAX + 1];
 };
+
+/**
+ * Check if a table output is valid.
+ *
+ * @param table	The table to check.
+ *
+ * @return True if the table output is valid, false otherwise.
+ */
+static inline bool kp_table_is_valid(const struct kp_table *table)
+{
+	return table != NULL &&
+	       table->shell != NULL &&
+	       table->col_idx <= table->col_num &&
+	       memchr(table->col0_fmt, 0, sizeof(table->col0_fmt)) != NULL &&
+	       memchr(table->coln_fmt, 0, sizeof(table->coln_fmt)) != NULL;
+}
 
 /**
  * Initialize a table output.
