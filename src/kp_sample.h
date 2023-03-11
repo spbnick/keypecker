@@ -33,14 +33,9 @@ enum kp_sample_rc {
  * Sample captured channels for a specified movement.
  *
  * @param target	The absolute actuator position to move to.
- * 			If invalid, no movement will be done.
  * @param speed		The speed with which to move, 0-100%.
  * @param conf		The capture configuration to use.
- * 			If NULL, no capture will be done, or waited for,
- * 			nor any results will be output.
  * @param dirs		The capture movement directions.
- * 			If KP_CAP_DIRS_NONE, no capture will be done, or waited
- * 			for, nor any results will be output.
  * @param ch_res_list	Location for channel capture results.
  * 			Only results for channels enabled in the
  * 			capture configuration for the specified directions (as

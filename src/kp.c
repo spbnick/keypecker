@@ -1549,7 +1549,7 @@ kp_cmd_measure(const struct shell *shell, size_t argc, char **argv)
 
 	/* Move to the closest boundary without capturing */
 	rc = kp_sample(even_down ? kp_act_pos_top : kp_act_pos_bottom,
-		       kp_act_speed, NULL, KP_CAP_DIRS_NONE, NULL, 0);
+		       kp_act_speed, &kp_cap_conf, KP_CAP_DIRS_NONE, NULL, 0);
 	if (rc != KP_SAMPLE_RC_OK) {
 		goto finish;
 	}

@@ -9,6 +9,7 @@
  */
 
 #include "kp_sample.h"
+#include <string.h>
 #include <stdlib.h>
 
 enum kp_sample_rc
@@ -29,49 +30,51 @@ kp_sample(int32_t target,
 	struct k_poll_event events[EVENT_NUM];
 	enum kp_act_move_rc move_rc = KP_ACT_MOVE_RC_OK;
 	enum kp_cap_rc cap_rc = KP_CAP_RC_OK;
-	const bool moving = kp_act_pos_is_valid(target);
-	const bool capturing = (conf != NULL) && (dirs != KP_CAP_DIRS_NONE);
+	int32_t start;
 	bool moved = false;
 	bool captured = false;
 	enum kp_input_msg msg;
 	size_t i;
 
-	assert(conf == NULL || kp_cap_conf_is_valid(conf));
+	assert(kp_act_pos_is_valid(target));
+	assert(kp_cap_conf_is_valid(conf));
 	assert(ch_res_list != NULL || ch_res_num == 0);
+
+	/* Get the start actuator position */
+	start = kp_act_locate();
+	/* If the actuator is off */
+	if (!kp_act_pos_is_valid(start)) {
+		return KP_SAMPLE_RC_OFF;
+	}
+
+	/* If we are not going to move, and so won't trigger a capture */
+	if (target == start) {
+		/* Output timeouts for all channels */
+		memset(ch_res_list, 0, sizeof(*ch_res_list) * ch_res_num);
+		return KP_SAMPLE_RC_OK;
+	}
 
 	/* Initialize events */
 	kp_input_get_event_init(&events[EVENT_IDX_INPUT]);
 	kp_act_finish_move_event_init(&events[EVENT_IDX_ACT_FINISH_MOVE]);
 	kp_cap_finish_event_init(&events[EVENT_IDX_CAP_FINISH]);
 
-	/* Start the capture, if requested */
-	if (capturing) {
-		kp_cap_start(conf, dirs);
-	} else {
-		events[EVENT_IDX_CAP_FINISH].type = K_POLL_TYPE_IGNORE;
-	}
+	/* Start the capture */
+	kp_cap_start(conf, dirs);
 
-	/* Start moving towards the target, if requested */
-	if (moving) {
-		kp_act_start_move_to(target, speed);
-	} else {
-		events[EVENT_IDX_ACT_FINISH_MOVE].type = K_POLL_TYPE_IGNORE;
-	}
+	/* Start moving towards the target */
+	kp_act_start_move_to(target, speed);
 
 	/* Move and capture */
-	for (; (moving && !moved) || (capturing && !captured);) {
+	for (; !moved || !captured;) {
 		while (k_poll(events, ARRAY_SIZE(events), K_FOREVER) != 0);
 
 		/* Handle input */
 		if (events[EVENT_IDX_INPUT].state) {
 			while (kp_input_get(&msg, K_FOREVER) != 0);
 			if (msg == KP_INPUT_MSG_ABORT) {
-				if (moving) {
-					kp_act_abort();
-				}
-				if (capturing) {
-					kp_cap_abort();
-				}
+				kp_act_abort();
+				kp_cap_abort();
 			}
 		}
 
@@ -140,7 +143,7 @@ kp_sample_check(int32_t top, int32_t bottom,
 	}
 	even_down = abs(pos - top) < abs(pos - bottom);
 	rc = kp_sample(even_down ? top : bottom,
-		       speed, NULL, KP_CAP_DIRS_NONE, NULL, 0);
+		       speed, conf, KP_CAP_DIRS_NONE, NULL, 0);
 	if (rc != KP_SAMPLE_RC_OK) {
 		return rc;
 	}
