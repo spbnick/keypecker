@@ -362,7 +362,7 @@ kp_cap_finish(struct kp_cap_ch_res *ch_res_list,
 		return KP_CAP_RC_ABORTED;
 	}
 
-	/* Initialize results to all-disabled */
+	/* Initialize results to all timed out */
 	memset(ch_res_list, 0, sizeof(*ch_res_list) * ch_res_num);
 
 	/* For each channel */
