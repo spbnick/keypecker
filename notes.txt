@@ -659,3 +659,11 @@ Should we actually consider going both ways a "pass" for simplicity?
 		specific directions, and that may prevent some bugs from
 		reproducing.
 		So perhaps it's better to keep giving the number of passes.
+---
+sample - collect -.
+                   :--- measure
+         display -'
+
+kp_measurement_acquire
+kp_measurement_print
+kp_measurement_make

@@ -13,7 +13,7 @@
 #include "kp_shell.h"
 #include "kp_input.h"
 #include "kp_sample.h"
-#include "kp_table.h"
+#include "kp_meas.h"
 #include "kp_misc.h"
 #include <stm32_ll_tim.h>
 #include <assert.h>
@@ -397,9 +397,6 @@ kp_cmd_set_bottom(const struct shell *shell, size_t argc, char **argv)
 
 /** Capture configuration */
 static struct kp_cap_conf kp_cap_conf;
-
-/* List of channel capture results */
-static struct kp_cap_ch_res kp_cap_ch_res_list[512 * KP_CAP_CH_NUM];
 
 /** Execute the
  * "set ch <idx> none/up/down/both [rising/falling [<name>]]"
@@ -1004,429 +1001,8 @@ SHELL_CMD_ARG_REGISTER(tighten, NULL,
 			"specified number of passes (default 4).",
 			kp_cmd_tighten, 1, 2);
 
-
-/**
- * Print basic statistics for "measure" command output.
- *
- * @param table		The table output to print to.
- * @param conf		The configuration the capture was done with.
- * @param even_down	True if even passes are directed down, false if up.
- * @param ch_res_list	A list (array) of channel results to summarize.
- * 			Contains only results for channels enabled for either
- * 			direction in turn.
- * @param passes	Number of passes. Must be greater than one.
- * @param verbose	True if the output should be verbose,
- * 			false otherwise.
- */
-static void
-kp_cmd_measure_output_stats(
-		struct kp_table *table,
-		const struct kp_cap_conf *conf,
-		bool even_down,
-		struct kp_cap_ch_res *ch_res_list,
-		size_t passes,
-		bool verbose)
-{
-	bool timeout[KP_CAP_CH_NUM][KP_CAP_NE_DIRS_NUM] = {{0, }};
-	bool overcapture[KP_CAP_CH_NUM][KP_CAP_NE_DIRS_NUM] = {{0, }};
-	bool unknown[KP_CAP_CH_NUM][KP_CAP_NE_DIRS_NUM] = {{0, }};
-	const char *metric_names[] = {
-		"Trigs, %",
-		"Min, us",
-		"Max, us",
-		"Mean, us"
-	};
-	const size_t metric_num = ARRAY_SIZE(metric_names);
-	uint32_t metric_data[metric_num][KP_CAP_CH_NUM][KP_CAP_NE_DIRS_NUM];
-	/* NOTE: Code below expects triggers to occupy index zero */
-	uint32_t (*triggers)[KP_CAP_CH_NUM][KP_CAP_NE_DIRS_NUM] =
-							&metric_data[0];
-	uint32_t (*min)[KP_CAP_CH_NUM][KP_CAP_NE_DIRS_NUM] = &metric_data[1];
-	uint32_t (*max)[KP_CAP_CH_NUM][KP_CAP_NE_DIRS_NUM] = &metric_data[2];
-	uint32_t (*mean)[KP_CAP_CH_NUM][KP_CAP_NE_DIRS_NUM] = &metric_data[3];
-	/* Values found per channel per direction set */
-	bool got_value[KP_CAP_CH_NUM][KP_CAP_NE_DIRS_NUM] = {{0, }, };
-	size_t pass, ch, metric;
-	enum kp_cap_ne_dirs ne_dirs;
-	struct kp_cap_ch_res *ch_res;
-
-	assert(table != NULL);
-	assert(kp_cap_conf_is_valid(conf));
-	assert((even_down & 1) == even_down);
-	assert(ch_res_list != NULL);
-	assert(passes > 1);
-
-	/* Initialize metrics */
-	for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
-		for (ne_dirs = 0; ne_dirs < KP_CAP_NE_DIRS_NUM; ne_dirs++) {
-			(*triggers)[ch][ne_dirs] = 0;
-			(*min)[ch][ne_dirs] = UINT32_MAX;
-			(*max)[ch][ne_dirs] = 0;
-		}
-	}
-
-	/* Find minimums and maximums */
-	for (ch_res = ch_res_list, pass = 0; pass < passes; pass++) {
-		ne_dirs = kp_cap_ne_dirs_from_down(even_down ^ (pass & 1));
-		for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
-			/* Skip channels disabled in this direction */
-			if (!(conf->ch_list[ch].dirs &
-			      kp_cap_dirs_from_ne(ne_dirs))) {
-				continue;
-			}
-			/* Aggregate the channel result */
-			switch (ch_res->status) {
-			case KP_CAP_CH_STATUS_TIMEOUT:
-				/* Got timeout for this direction */
-				timeout[ch][ne_dirs] = true;
-				/* Got timeout for either direction */
-				timeout[ch][KP_CAP_NE_DIRS_BOTH] = true;
-				break;
-			case KP_CAP_CH_STATUS_OVERCAPTURE:
-				/* Got overcapture for this direction */
-				overcapture[ch][ne_dirs] = true;
-				/* Got overcapture for either direction */
-				overcapture[ch][KP_CAP_NE_DIRS_BOTH] = true;
-				/* FALLTHROUGH */
-			case KP_CAP_CH_STATUS_OK:
-#define ADJ_MIN(_lvalue) (_lvalue = MIN(_lvalue, ch_res->value_us))
-#define ADJ_MAX(_lvalue) (_lvalue = MAX(_lvalue, ch_res->value_us))
-				/* Got trigger/value for this direction */
-				(*triggers)[ch][ne_dirs]++;
-				got_value[ch][ne_dirs] = true;
-				ADJ_MIN((*min)[ch][ne_dirs]);
-				ADJ_MAX((*max)[ch][ne_dirs]);
-				/* Got trigger/value for either direction */
-				(*triggers)[ch][KP_CAP_NE_DIRS_BOTH]++;
-				got_value[ch][KP_CAP_NE_DIRS_BOTH] = true;
-				ADJ_MIN((*min)[ch][KP_CAP_NE_DIRS_BOTH]);
-				ADJ_MAX((*max)[ch][KP_CAP_NE_DIRS_BOTH]);
-#undef ADJ_MAX
-#undef ADJ_MIN
-				break;
-			default:
-				/* Got unknown status for this direction */
-				unknown[ch][ne_dirs] = true;
-				/* Got unknown status for either direction */
-				unknown[ch][KP_CAP_NE_DIRS_BOTH] = true;
-				break;
-			}
-			ch_res++;
-		}
-	}
-
-	/* Convert trigger counters to percentage */
-	for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
-		for (ne_dirs = 0; ne_dirs < KP_CAP_NE_DIRS_NUM; ne_dirs++) {
-			/* Enabled counted direction */
-			enum kp_cap_dirs enabled_dirs =
-				kp_cap_dirs_from_ne(ne_dirs) &
-				conf->ch_list[ch].dirs;
-			/* If the channel is disabled in counted directions */
-			if (!enabled_dirs) {
-				/* Assign invalid percentage */
-				(*triggers)[ch][ne_dirs] = UINT32_MAX;
-				continue;
-			}
-			(*triggers)[ch][ne_dirs] =
-				(*triggers)[ch][ne_dirs] * 100 /
-				/* If both counted directions are enabled */
-				(enabled_dirs == KP_CAP_DIRS_BOTH
-					/* Take percentage of all passes */
-					? passes
-					/*
-					 * Else, take percentage of enabled
-					 * direction's passes
-					 */
-					: ((passes >> 1) +
-					   (passes &
-					    (enabled_dirs ==
-					     kp_cap_dirs_from_down(
-						even_down
-					     )))));
-		}
-	}
-
-	/* Calculate means */
-	for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
-		for (ne_dirs = 0; ne_dirs < KP_CAP_NE_DIRS_NUM; ne_dirs++) {
-			(*mean)[ch][ne_dirs] =
-				((*min)[ch][ne_dirs] +
-				 (*max)[ch][ne_dirs]) / 2;
-		}
-	}
-
-	/*
-	 * Output results per direction per metric per channel
-	 */
-	/* For each non-empty direction combination */
-	for (ne_dirs = verbose ? 0 : KP_CAP_NE_DIRS_BOTH;
-			ne_dirs < KP_CAP_NE_DIRS_NUM; ne_dirs++) {
-		/* Output direction header */
-		kp_table_sep(table);
-		kp_table_col(
-			table, "%s",
-			kp_cap_dirs_to_cpstr(kp_cap_dirs_from_ne(ne_dirs))
-		);
-		for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
-			if (conf->ch_list[ch].dirs) {
-				kp_table_col(table, "Value");
-			}
-		}
-		kp_table_nl(table);
-		kp_table_sep(table);
-		/* For each metric */
-		for (metric = 0; metric < metric_num; metric++) {
-			/* Output metric name */
-			kp_table_col(table, "%s", metric_names[metric]);
-			/* For each channel */
-			for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
-				/*
-				 * If the channel is disabled for this
-				 * direction
-				 */
-				if (!(conf->ch_list[ch].dirs &
-				      kp_cap_dirs_from_ne(ne_dirs))) {
-					/* If the channel is enabled */
-					if (conf->ch_list[ch].dirs) {
-						kp_table_col(table, "");
-					}
-					continue;
-				}
-				/* Output metric value and/or flags */
-				kp_table_col(table,
-				    /*
-				     * If it's the trigger percentage
-				     * (at metric index zero),
-				     * or we have measured values
-				     */
-				    (!metric || got_value[ch][ne_dirs])
-					    ? "%s%s%s%u" : "%s%s%s",
-				    overcapture[ch][ne_dirs] ? "+" : "",
-				    unknown[ch][ne_dirs] ? "?" : "",
-				    timeout[ch][ne_dirs] ? "!" : "",
-				    metric_data[metric][ch][ne_dirs]);
-			}
-			kp_table_nl(table);
-		}
-	}
-}
-
-/**
- * Print a time histogram for "measure" command output.
- *
- * @param table		The table output to print to.
- * @param conf		The configuration the capture was done with.
- * @param even_down	True if even passes are directed down, false if up.
- * @param ch_res_list	A list (array) of channel results to summarize.
- * 			Contains only results for channels enabled for either
- * 			direction in turn.
- * @param passes	Number of passes. Must be greater than zero.
- * @param verbose	True if the output should be verbose,
- * 			false otherwise.
- */
-static void
-kp_cmd_measure_output_histogram(
-		struct kp_table *table,
-		const struct kp_cap_conf *conf,
-		bool even_down,
-		struct kp_cap_ch_res *ch_res_list,
-		size_t passes,
-		bool verbose)
-{
-#define STEP_NUM 16
-#define CHAR_NUM (KP_CAP_CH_NAME_MAX_LEN - 1)
-	uint32_t min, max;
-	uint32_t step_size;
-	size_t step_passes[KP_CAP_CH_NUM][KP_CAP_NE_DIRS_NUM]
-				[STEP_NUM] = {{{0, }}};
-	size_t max_step_passes[KP_CAP_CH_NUM][KP_CAP_NE_DIRS_NUM] = {{0, }};
-	size_t ch, pass;
-	enum kp_cap_ne_dirs ne_dirs;
-	struct kp_cap_ch_res *ch_res;
-	ssize_t step_idx;
-	uint32_t step_min;
-	char char_buf[CHAR_NUM + 2] = {0, };
-	size_t char_idx;
-	size_t chars, next_chars;
-	char c;
-
-	assert(table != NULL);
-	assert(kp_cap_conf_is_valid(conf));
-	assert((even_down & 1) == even_down);
-	assert(ch_res_list != NULL);
-	assert(passes > 0);
-
-	/* Find minimum and maximum time for all channels */
-	min = UINT32_MAX;
-	max = 0;
-	for (ch_res = ch_res_list, pass = 0; pass < passes; pass++) {
-		for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
-			if (conf->ch_list[ch].dirs &
-			    kp_cap_dirs_from_down((pass & 1) ^ even_down)) {
-				if (ch_res->status == KP_CAP_CH_STATUS_OK ||
-				    ch_res->status ==
-					KP_CAP_CH_STATUS_OVERCAPTURE) {
-					min = MIN(min, ch_res->value_us);
-					max = MAX(max, ch_res->value_us);
-				}
-				ch_res++;
-			}
-		}
-	}
-
-	/* Calculate histogram step values per channel */
-	step_size = (max - min) / STEP_NUM;
-	if (step_size == 0) {
-		step_size = KP_CAP_RES_US;
-	}
-	for (ch_res = ch_res_list, pass = 0; pass < passes; pass++) {
-		ne_dirs = kp_cap_ne_dirs_from_down(even_down ^ (pass & 1));
-		for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
-			if (!(conf->ch_list[ch].dirs &
-			      kp_cap_dirs_from_ne(ne_dirs))) {
-			     continue;
-			}
-			if (ch_res->status == KP_CAP_CH_STATUS_OK ||
-			    ch_res->status == KP_CAP_CH_STATUS_OVERCAPTURE) {
-				step_idx = MIN(
-					(ch_res->value_us - min) / step_size,
-					STEP_NUM - 1
-				);
-				/* Count this direction */
-				step_passes[ch][ne_dirs][step_idx]++;
-				/* Count both directions */
-				step_passes[ch]
-					[KP_CAP_NE_DIRS_BOTH][step_idx]++;
-			}
-			ch_res++;
-		}
-	}
-
-	/* Calculate histogram maximums per channel per direction */
-	for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
-		for (ne_dirs = 0; ne_dirs < KP_CAP_NE_DIRS_NUM; ne_dirs++) {
-			for (step_idx = 0; step_idx < STEP_NUM; step_idx++) {
-				max_step_passes[ch][ne_dirs] = MAX(
-					max_step_passes[ch][ne_dirs],
-					step_passes[ch][ne_dirs][step_idx]
-				);
-			}
-		}
-	}
-
-	/* Scale histograms down to characters */
-	for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
-		for (ne_dirs = 0; ne_dirs < KP_CAP_NE_DIRS_NUM; ne_dirs++) {
-			for (step_idx = 0; step_idx < STEP_NUM; step_idx++) {
-				if (max_step_passes[ch][ne_dirs] == 0) {
-					continue;
-				}
-				step_passes[ch][ne_dirs][step_idx] =
-					step_passes[ch][ne_dirs][step_idx] *
-					CHAR_NUM /
-					max_step_passes[ch][ne_dirs];
-			}
-		}
-	}
-
-	/* Output header */
-	kp_table_sep(table);
-	kp_table_col(table, "Time");
-	for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
-		if (conf->ch_list[ch].dirs) {
-			kp_table_col(table, "Triggers");
-		}
-	}
-	kp_table_nl(table);
-
-	/*
-	 * Output histograms per each (non-empty) combination of directions
-	 */
-	/* For each direction */
-	for (ne_dirs = verbose ? 0 : KP_CAP_NE_DIRS_BOTH;
-			ne_dirs < KP_CAP_NE_DIRS_NUM; ne_dirs++) {
-		/* Output direction header */
-		kp_table_sep(table);
-		kp_table_col(
-			table, "%s, us",
-			kp_cap_dirs_to_cpstr(kp_cap_dirs_from_ne(ne_dirs))
-		);
-		for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
-			/* If channel is not enabled in this direction */
-			if (!(conf->ch_list[ch].dirs &
-			      kp_cap_dirs_from_ne(ne_dirs))) {
-				/* If channel is enabled for a direction */
-				if (conf->ch_list[ch].dirs) {
-					kp_table_col(table, "");
-				}
-				continue;
-			}
-			kp_table_col(table, "0%*zu",
-				     CHAR_NUM, max_step_passes[ch][ne_dirs]);
-		}
-		kp_table_nl(table);
-		/* For each line of histograms (step_num + 2) */
-		for (step_idx = -1, step_min = min - step_size;
-		     step_idx <= STEP_NUM;
-		     step_idx++, step_min += step_size) {
-			/* Output line header value */
-			if (step_idx < 0) {
-				kp_table_col(table, "");
-			} else {
-				kp_table_col(table, "%u", step_min);
-			}
-			/* Output histogram bars per channel */
-			for (ch = 0; ch < KP_CAP_CH_NUM; ch++) {
-				/* If channel direction is not enabled */
-				if (!(conf->ch_list[ch].dirs &
-				      kp_cap_dirs_from_ne(ne_dirs))) {
-					/* If channel is enabled */
-					if (conf->ch_list[ch].dirs) {
-						kp_table_col(table, "");
-					}
-					continue;
-				}
-				chars = (step_idx >= 0 && step_idx < STEP_NUM)
-					? step_passes[ch][ne_dirs][step_idx]
-					: 0;
-				next_chars = (step_idx < STEP_NUM - 1)
-					? step_passes[ch][ne_dirs]
-							[step_idx + 1]
-					: 0;
-				/* For each character in the column buffer */
-				for (char_idx = 0; char_idx <= CHAR_NUM;
-				     char_idx++) {
-					if (char_idx == 0) {
-						c = '|';
-					} else if (char_idx == chars) {
-						c = '|';
-					} else if (char_idx == CHAR_NUM) {
-						c = ':';
-					} else if (char_idx > chars) {
-						if (char_idx < next_chars) {
-							c = '_';
-						} else {
-							c = ' ';
-						}
-					} else if (char_idx < chars) {
-						if (char_idx > next_chars) {
-							c = '_';
-						} else {
-							c = ' ';
-						}
-					}
-					char_buf[char_idx] = c;
-				}
-				kp_table_col(table, "%s", char_buf);
-			}
-			kp_table_nl(table);
-		}
-	}
-
-#undef CHAR_NUM
-#undef STEP_NUM
-}
+/** Last measurement */
+struct kp_meas kp_meas = KP_MEAS_INVALID;
 
 /** Execute the "measure" command */
 static int
@@ -1436,18 +1012,10 @@ kp_cmd_measure(const struct shell *shell, size_t argc, char **argv)
 	long passes;
 	bool verbose;
 	size_t i;
-	size_t enabled_ch_num;
-	size_t named_ch_num;
-	struct kp_table table;
-	static struct kp_cap_ch_res *ch_res;
-	size_t ch_res_rem;
-	size_t pass, captured_passes;
-	enum kp_sample_rc rc = KP_CAP_RC_OK;
+	enum kp_sample_rc rc;
 	int32_t start_pos;
 	/* True if even passes are directed down, false if up */
 	bool even_down;
-	/* Directions that we'll capture in */
-	enum kp_cap_dirs dirs;
 
 	/* Check for power and remember the start position */
 	if (!kp_act_pos_is_valid(start_pos = kp_act_locate())) {
@@ -1487,13 +1055,6 @@ kp_cmd_measure(const struct shell *shell, size_t argc, char **argv)
 		}
 	}
 
-	/* Calculate the directions we'll capture in */
-	dirs = (passes == 0)
-		? KP_CAP_DIRS_NONE
-		: ((passes == 1)
-			? kp_cap_dirs_from_down(even_down)
-			: KP_CAP_DIRS_BOTH);
-
 	/* Parse the verbosity flag */
 	if (argc < 3) {
 		verbose = false;
@@ -1513,22 +1074,9 @@ kp_cmd_measure(const struct shell *shell, size_t argc, char **argv)
 			return 1;
 		}
 	}
-	/* Force verbose, if doing one pass only */
-	verbose = verbose || (passes == 1);
-
-	/* Collect channel stats */
-	for (i = 0, enabled_ch_num = 0, named_ch_num = 0;
-		i < ARRAY_SIZE(kp_cap_conf.ch_list); i++) {
-		if (kp_cap_conf.ch_list[i].dirs & dirs) {
-			enabled_ch_num++;
-			if (kp_cap_conf.ch_list[i].name[0] != '\0') {
-				named_ch_num++;
-			}
-		}
-	}
 
 	/* Check that at least one channel is enabled */
-	if (enabled_ch_num == 0) {
+	if (kp_cap_conf_ch_num(&kp_cap_conf, KP_CAP_DIRS_BOTH) == 0) {
 		shell_error(shell, "No enabled channels, aborting");
 		shell_info(shell,
 			   "Use \"set ch\" command to enable channels");
@@ -1537,150 +1085,23 @@ kp_cmd_measure(const struct shell *shell, size_t argc, char **argv)
 
 	/* Check that we have enough memory to record all passes */
 	i = kp_cap_conf_ch_res_idx(&kp_cap_conf, even_down, passes, 0);
-	if (i >= ARRAY_SIZE(kp_cap_ch_res_list)) {
+	if (i > ARRAY_SIZE(kp_meas.ch_res_list)) {
 		shell_error(
 			shell,
 			"Not enough memory to capture measurement results.\n"
 			"Available: %zu, required: %zu.\n",
-			ARRAY_SIZE(kp_cap_ch_res_list), i
+			ARRAY_SIZE(kp_meas.ch_res_list), i
 		);
 		return 1;
 	}
 
-	/* Move to the closest boundary without capturing */
-	rc = kp_sample(even_down ? kp_act_pos_top : kp_act_pos_bottom,
-		       kp_act_speed, &kp_cap_conf, KP_CAP_DIRS_NONE, NULL, 0);
-	if (rc != KP_SAMPLE_RC_OK) {
-		goto finish;
-	}
-
-	/* Initialize the table output */
-	kp_table_init(&table, shell,
-		      KP_CAP_TIME_MAX_DIGITS + 1,
-		      KP_CAP_CH_NAME_MAX_LEN,
-		      enabled_ch_num + 1);
-
-	/* Output the channel index header */
-	kp_table_col(&table, "");
-	for (i = 0; i < ARRAY_SIZE(kp_cap_conf.ch_list); i++) {
-		if (kp_cap_conf.ch_list[i].dirs & dirs) {
-			kp_table_col(&table, "#%zu", i);
-		}
-	}
-	kp_table_nl(&table);
-
-	/* Output the channel name header, if any are named */
-	if (named_ch_num != 0) {
-		kp_table_col(&table, "");
-		for (i = 0; i < ARRAY_SIZE(kp_cap_conf.ch_list); i++) {
-			if (kp_cap_conf.ch_list[i].dirs & dirs) {
-				kp_table_col(&table, "%s",
-					     kp_cap_conf.ch_list[i].name);
-			}
-		}
-		kp_table_nl(&table);
-	}
-
-	/* Output timing header, if verbose or doing one pass only */
-	if (verbose || passes == 1) {
-		kp_table_sep(&table);
-		kp_table_col(&table, "Up/Down");
-		for (i = 0; i < ARRAY_SIZE(kp_cap_conf.ch_list); i++) {
-			if (kp_cap_conf.ch_list[i].dirs & dirs) {
-				kp_table_col(&table, "Time, us");
-			}
-		}
-		kp_table_nl(&table);
-		kp_table_sep(&table);
-	}
-
-	/* Capture the requested number of passes */
-	for (ch_res_rem = ARRAY_SIZE(kp_cap_ch_res_list),
-	     ch_res = kp_cap_ch_res_list,
-	     captured_passes = 0,
-	     pass = 0; pass < passes; pass++) {
-		enum kp_cap_dirs dir =
-			kp_cap_dirs_from_down((pass ^ even_down) & 1);
-		bool captured = false;
-
-		/* Capture moving to the opposite boundary */
-		rc = kp_sample(
-			dir == KP_CAP_DIRS_DOWN ? kp_act_pos_bottom
-						: kp_act_pos_top,
-			kp_act_speed, &kp_cap_conf, dir, ch_res, ch_res_rem
-		);
-		if (rc != KP_SAMPLE_RC_OK) {
-			goto finish;
-		}
-
-		/* Output direction in the first column, if verbose */
-		if (verbose) {
-			kp_table_col(&table, "%s", kp_cap_dirs_to_cpstr(dir));
-		}
-
-		/* Count/output channel results */
-		for (i = 0; i < ARRAY_SIZE(kp_cap_conf.ch_list); i++) {
-			/* Skip channels disabled for this run */
-			if (!(kp_cap_conf.ch_list[i].dirs & dirs)) {
-				continue;
-			}
-			/* If channel is disabled in this direction only */
-			if (!(kp_cap_conf.ch_list[i].dirs & dir)) {
-				/* Output blank column, if verbose */
-				if (verbose) {
-					kp_table_col(&table, "");
-				}
-				/* Skip it */
-				continue;
-			}
-			/* Output channel result, if verbose */
-			if (verbose) {
-				switch (ch_res->status) {
-				case KP_CAP_CH_STATUS_TIMEOUT:
-					kp_table_col(&table, "!");
-					break;
-				case KP_CAP_CH_STATUS_OVERCAPTURE:
-					kp_table_col(&table, "+%u",
-						     ch_res->value_us);
-					break;
-				case KP_CAP_CH_STATUS_OK:
-					kp_table_col(&table, "%u",
-						     ch_res->value_us);
-					break;
-				default:
-					kp_table_col(&table, "?");
-					break;
-				}
-			}
-			/* Move onto next channel result */
-			ch_res++;
-			ch_res_rem--;
-			captured = true;
-		}
-
-		/* Finish the line, if verbose */
-		if (verbose) {
-			kp_table_nl(&table);
-		}
-
-		captured_passes += captured;
-	}
-
-	if (captured_passes > 1) {
-		kp_cmd_measure_output_stats(
-			&table, &kp_cap_conf, even_down, kp_cap_ch_res_list,
-			passes, verbose
-		);
-		kp_cmd_measure_output_histogram(
-			&table, &kp_cap_conf, even_down, kp_cap_ch_res_list,
-			passes, verbose
-		);
-	}
-
-	kp_table_sep(&table);
-
-finish:
-
+	/* Initialize the measurement */
+	kp_meas_init(&kp_meas, 
+		     kp_act_pos_top, kp_act_pos_bottom,
+		     kp_act_speed, passes,
+		     &kp_cap_conf, even_down);
+	/* Acquire and output the measurement */
+	rc = kp_meas_make(shell, &kp_meas, verbose);
 	/* If we failed */
 	if (rc != KP_SAMPLE_RC_OK) {
 		return 1;
@@ -1693,7 +1114,7 @@ finish:
 		case KP_ACT_MOVE_RC_ABORTED:
 			shell_warn(
 				shell,
-				"Move back to the start position "
+				"Moving back to the start position "
 				"was aborted"
 			);
 			break;
