@@ -79,7 +79,7 @@ kp_cap_isr(void *arg)
 
 	/* If the capture is not aborted */
 	if (!kp_cap_aborted) {
-		uint32_t sr = kp_cap_timer->SR;
+		uint32_t sr = kp_cap_timer->SR & kp_cap_timer->DIER;
 		/* If the timer got triggered */
 		if (sr & TIM_SR_TIF) {
 			/* Raise the debugging pins, if any */
