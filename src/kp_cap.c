@@ -531,6 +531,8 @@ kp_cap_init(TIM_TypeDef* timer, const struct kp_cap_dbg_conf *dbg_conf)
 	LL_TIM_GenerateEvent_UPDATE(kp_cap_timer);
 	/* Count up from zero */
 	LL_TIM_SetCounterMode(kp_cap_timer, LL_TIM_COUNTERMODE_UP);
+	/* Disable auto-reload register preloading */
+	LL_TIM_DisableARRPreload(kp_cap_timer);
 	/* Configure trigger channel as input:
 	 * directly connected to its input line,
 	 * no prescaling (not used for triggering anyway),
