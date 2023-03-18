@@ -273,8 +273,8 @@ kp_meas_print_stats(struct kp_table *table,
 	static const char *metric_names[] = {
 		"Trigs, %",
 		"Min, us",
+		"Mean, us",
 		"Max, us",
-		"Mean, us"
 	};
 	const size_t metric_num = ARRAY_SIZE(metric_names);
 	uint32_t metric_data[metric_num][KP_CAP_CH_NUM][KP_CAP_NE_DIRS_NUM];
@@ -282,8 +282,8 @@ kp_meas_print_stats(struct kp_table *table,
 	uint32_t (*triggers)[KP_CAP_CH_NUM][KP_CAP_NE_DIRS_NUM] =
 							&metric_data[0];
 	uint32_t (*min)[KP_CAP_CH_NUM][KP_CAP_NE_DIRS_NUM] = &metric_data[1];
-	uint32_t (*max)[KP_CAP_CH_NUM][KP_CAP_NE_DIRS_NUM] = &metric_data[2];
-	uint32_t (*mean)[KP_CAP_CH_NUM][KP_CAP_NE_DIRS_NUM] = &metric_data[3];
+	uint32_t (*mean)[KP_CAP_CH_NUM][KP_CAP_NE_DIRS_NUM] = &metric_data[2];
+	uint32_t (*max)[KP_CAP_CH_NUM][KP_CAP_NE_DIRS_NUM] = &metric_data[3];
 	/* Values found per channel per direction set */
 	bool got_value[KP_CAP_CH_NUM][KP_CAP_NE_DIRS_NUM] = {{0, }, };
 	size_t pass, ch, metric;
