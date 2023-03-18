@@ -1004,47 +1004,82 @@ SHELL_CMD_ARG_REGISTER(tighten, NULL,
 /** Last measurement */
 struct kp_meas kp_meas = KP_MEAS_INVALID;
 
-/** Execute the "measure" command */
+/** Execute an "acquire"/"print"/"measure" command */
 static int
-kp_cmd_measure(const struct shell *shell, size_t argc, char **argv)
+kp_cmd_meas(const struct shell *shell, size_t argc, char **argv)
 {
 	const char *arg;
-	long passes;
-	bool verbose;
+	/* True if a measurement has to be acquired */
+	bool acquire = false;
+	/* Number of measurement passes to make */
+	long acquire_passes = 1;
+	/* Measurement start position */
+	int32_t acquire_start_pos = KP_ACT_POS_INVALID;
+	/* True if measurement's even passes are directed down, false if up */
+	bool acquire_even_down = UINT8_MAX;
+	/* True if the measurement has to be printed */
+	bool print = false;
+	/* True if the measurement must be printed in verbose format */
+	bool print_verbose = false;
+
 	size_t i;
 	enum kp_sample_rc rc;
-	int32_t start_pos;
-	/* True if even passes are directed down, false if up */
-	bool even_down;
 
-	/* Check for power and remember the start position */
-	if (!kp_act_pos_is_valid(start_pos = kp_act_locate())) {
-		shell_error(shell, "Actuator is off, aborting");
+	arg = argv[0];
+	if (strcmp(arg, "acquire") == 0) {
+		acquire = true;
+	} else if (strcmp(arg, "print") == 0) {
+		print = true;
+	} else if (strcmp(arg, "measure") == 0) {
+		acquire = true;
+		print = true;
+	} else {
+		assert(!"Unknown command name");
 		return 1;
 	}
-	/* Check for parameters */
-	if (!kp_act_pos_is_valid(kp_act_pos_top)) {
-		shell_error(shell, "Top position not set, aborting");
-		return 1;
+	/* NOTE: Don't move to next argument yet, as argc is special here */
+
+	if (acquire) {
+		/* Check for power and remember the start position */
+		if (!kp_act_pos_is_valid(
+			acquire_start_pos = kp_act_locate()
+		)) {
+			shell_error(shell, "Actuator is off, aborting");
+			return 1;
+		}
+		/* Check for parameters */
+		if (!kp_act_pos_is_valid(kp_act_pos_top)) {
+			shell_error(shell, "Top position not set, aborting");
+			return 1;
+		}
+		if (!kp_act_pos_is_valid(kp_act_pos_bottom)) {
+			shell_error(shell,
+					"Bottom position not set, aborting");
+			return 1;
+		}
+		/* Decide on the initial direction */
+		acquire_even_down = abs(acquire_start_pos - kp_act_pos_top) <
+			abs(acquire_start_pos - kp_act_pos_bottom);
+	} else if (print && !kp_meas_is_valid(&kp_meas)) {
+		shell_error(shell,
+			"No measurement to print. "
+			"Execute \"acquire\" or \"measure\" command first."
+		);
 	}
-	if (!kp_act_pos_is_valid(kp_act_pos_bottom)) {
-		shell_error(shell, "Bottom position not set, aborting");
-		return 1;
-	}
-	/* Decide on the initial direction */
-	even_down = abs(start_pos - kp_act_pos_top) <
-		abs(start_pos - kp_act_pos_bottom);
 
 	/* Return to the shell and restart in an input-diverted thread */
-	KP_SHELL_YIELD(kp_cmd_measure, kp_input_bypass_cb);
+	KP_SHELL_YIELD(kp_cmd_meas, kp_input_bypass_cb);
 	kp_input_reset();
+	/* Skip the command name argument */
+	argc--;
+	argv++;
 
-	/* Parse the number of passes to measure */
-	if (argc < 2) {
-		passes = 1;
-	} else {
-		arg = argv[1];
-		if (!kp_parse_non_negative_number(arg, &passes)) {
+	/* Parse the number of passes to acquire */
+	if (acquire && argc > 0) {
+		arg = argv[0];
+		if (!kp_parse_non_negative_number(
+			arg, &acquire_passes
+		)) {
 			shell_error(
 				shell,
 				"Invalid number of passes "
@@ -1053,17 +1088,17 @@ kp_cmd_measure(const struct shell *shell, size_t argc, char **argv)
 			);
 			return 1;
 		}
+		argc--;
+		argv++;
 	}
 
-	/* Parse the verbosity flag */
-	if (argc < 3) {
-		verbose = false;
-	} else {
-		arg = argv[2];
+	/* Parse the printing verbosity flag */
+	if (print && argc > 0) {
+		arg = argv[0];
 		if (kp_strcasecmp(arg, "verbose") == 0) {
-			verbose = true;
+			print_verbose = true;
 		} else if (kp_strcasecmp(arg, "brief") == 0) {
-			verbose = false;
+			print_verbose = false;
 		} else {
 			shell_error(
 				shell,
@@ -1073,75 +1108,97 @@ kp_cmd_measure(const struct shell *shell, size_t argc, char **argv)
 			);
 			return 1;
 		}
+		argc--;
+		argv++;
 	}
 
-	/* Check that at least one channel is enabled */
-	if (kp_cap_conf_ch_num(&kp_cap_conf, KP_CAP_DIRS_BOTH) == 0) {
-		shell_error(shell, "No enabled channels, aborting");
-		shell_info(shell,
-			   "Use \"set ch\" command to enable channels");
-		return 1;
-	}
+	if (acquire) {
+		/* Check that at least one channel is enabled */
+		if (kp_cap_conf_ch_num(&kp_cap_conf, KP_CAP_DIRS_BOTH) == 0) {
+			shell_error(shell, "No enabled channels, aborting");
+			shell_info(shell,
+				"Use \"set ch\" command to enable channels");
+			return 1;
+		}
 
-	/* Check that we have enough memory to record all passes */
-	i = kp_cap_conf_ch_res_idx(&kp_cap_conf, even_down, passes, 0);
-	if (i > ARRAY_SIZE(kp_meas.ch_res_list)) {
-		shell_error(
-			shell,
-			"Not enough memory to capture measurement results.\n"
-			"Available: %zu, required: %zu.\n",
-			ARRAY_SIZE(kp_meas.ch_res_list), i
-		);
-		return 1;
-	}
-
-	/* Initialize the measurement */
-	kp_meas_init(&kp_meas, 
-		     kp_act_pos_top, kp_act_pos_bottom,
-		     kp_act_speed, passes,
-		     &kp_cap_conf, even_down);
-	/* Acquire and output the measurement */
-	rc = kp_meas_make(shell, &kp_meas, verbose);
-	/* If we failed */
-	if (rc != KP_SAMPLE_RC_OK) {
-		return 1;
-	}
-
-	/* Try to return to the start position */
-	switch (kp_act_move_to(start_pos, kp_act_speed)) {
-		case KP_ACT_MOVE_RC_OK:
-			break;
-		case KP_ACT_MOVE_RC_ABORTED:
-			shell_warn(
-				shell,
-				"Moving back to the start position "
-				"was aborted"
-			);
-			break;
-		case KP_ACT_MOVE_RC_OFF:
-			shell_warn(
-				shell,
-				"Couldn't move back to the start position - "
-				"actuator is off"
-			);
-			break;
-		default:
+		/* Check that we have enough memory to record all passes */
+		i = kp_cap_conf_ch_res_idx(&kp_cap_conf, acquire_even_down,
+						acquire_passes, 0);
+		if (i > ARRAY_SIZE(kp_meas.ch_res_list)) {
 			shell_error(
 				shell,
-				"Unexpected error moving back to the start "
-				"position"
+				"Not enough memory to capture measurement "
+				"results.\nAvailable: %zu, required: %zu.\n",
+				ARRAY_SIZE(kp_meas.ch_res_list), i
 			);
-			break;
+			return 1;
+		}
+
+		/* Initialize the measurement */
+		kp_meas_init(&kp_meas,
+			     kp_act_pos_top, kp_act_pos_bottom,
+			     kp_act_speed, acquire_passes,
+			     &kp_cap_conf, acquire_even_down);
+		/* Acquire (and possibly print) the measurement */
+		if (print) {
+			rc = kp_meas_make(shell, &kp_meas, print_verbose);
+		} else {
+			rc = kp_meas_acquire(&kp_meas, NULL, NULL);
+		}
+		/* If we failed */
+		if (rc != KP_SAMPLE_RC_OK) {
+			return 1;
+		}
+
+		/* Try to return to the start position */
+		switch (kp_act_move_to(acquire_start_pos, kp_act_speed)) {
+			case KP_ACT_MOVE_RC_OK:
+				break;
+			case KP_ACT_MOVE_RC_ABORTED:
+				shell_warn(
+					shell,
+					"Moving back to the start position "
+					"was aborted"
+				);
+				break;
+			case KP_ACT_MOVE_RC_OFF:
+				shell_warn(
+					shell,
+					"Couldn't move back to the start "
+					"position - actuator is off"
+				);
+				break;
+			default:
+				shell_error(
+					shell,
+					"Unexpected error moving back to the "
+					"start position"
+				);
+				break;
+		}
+	} else if (print) {
+		kp_meas_print(shell, &kp_meas, print_verbose);
 	}
 
 	return 0;
 }
 
 SHELL_CMD_ARG_REGISTER(measure, NULL,
-			"Measure timing on all enabled channels for "
-			"specified number of passes (default 1), and output "
-			"brief (default), or verbose results",
-			kp_cmd_measure, 1, 2);
+		       "Acquire a timing measurement on all enabled "
+		       "channels for specified number of passes "
+		       "(default 1), and output \"brief\" (default), "
+		       "or \"verbose\" results",
+		       kp_cmd_meas, 1, 2);
+
+SHELL_CMD_ARG_REGISTER(acquire, NULL,
+		       "Acquire a timing measurement on all enabled channels "
+		       "for specified number of passes (default 1)",
+		       kp_cmd_meas, 1, 1);
+
+SHELL_CMD_ARG_REGISTER(print, NULL,
+		       "Print the last timing measurement in a \"brief\" "
+		       "(default) or \"verbose\" format",
+		       kp_cmd_meas, 1, 1);
 
 void
 main(void)
