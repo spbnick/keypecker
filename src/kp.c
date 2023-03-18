@@ -287,33 +287,53 @@ SHELL_CMD_ARG_REGISTER(swing, NULL,
  * 		If NULL, or if the value is invalid, the adjustment starts
  * 		from the current position. If NULL, the final position is not
  * 		stored. Only written to after a successful adjustment.
+ * @param min	The minimum position to limit adjustment to, less than or
+ *		equal to max. Or KP_ACT_POS_INVALID, meaning KP_ACT_POS_MIN.
+ * @param max	The maximum position to limit adjustment to, greater than or
+ *		equal to min. Or KP_ACT_POS_INVALID, meaning KP_ACT_POS_MAX.
  * @param speed	The speed with which to move, 0-100%.
  *
  * @return A movement result code, excluding KP_ACT_MOVE_TIMEOUT.
  */
 static enum kp_act_move_rc
-kp_adjust(int32_t *ppos, uint32_t speed)
+kp_adjust(int32_t *ppos, int32_t min, int32_t max, uint32_t speed)
 {
 	int32_t pos = (ppos == NULL) ? KP_ACT_POS_INVALID : *ppos;
 	enum kp_act_move_rc rc;
 	enum kp_input_msg msg;
 
-	/* Move to the position in the variable, if any */
-	if (pos != KP_ACT_POS_INVALID) {
-		rc = kp_act_move_to(pos, speed);
-		if (rc != KP_ACT_MOVE_RC_OK) {
-			return rc;
+	if (!kp_act_pos_is_valid(min)) {
+		min = KP_ACT_POS_MIN;
+	}
+	if (!kp_act_pos_is_valid(max)) {
+		max = KP_ACT_POS_MAX;
+	}
+
+	assert(min <= max);
+
+	if (!kp_act_pos_is_valid(pos)) {
+		pos = kp_act_locate();
+		if (!kp_act_pos_is_valid(pos)) {
+			return KP_ACT_MOVE_RC_OFF;
 		}
 	}
 
-	/* Adjust the position until confirmed */
+	/* Bring the variable within the allowed range */
+	pos = CLAMP(pos, min, max);
+
+	/* Move to the position in the variable */
+	rc = kp_act_move_to(pos, speed);
+	if (rc != KP_ACT_MOVE_RC_OK) {
+		return rc;
+	}
+
+	/* Adjust the position within the allowed range until confirmed */
 	do {
 		while (kp_input_get(&msg, K_FOREVER) != 0);
 		if (msg == KP_INPUT_MSG_UP || msg == KP_INPUT_MSG_DOWN) {
-			rc = kp_act_move_by(
-				(msg == KP_INPUT_MSG_DOWN) ? 1 : -1,
-				speed
-			);
+			pos += (msg == KP_INPUT_MSG_DOWN) ? 1 : -1;
+			pos = CLAMP(pos, min, max);
+			rc = kp_act_move_to(pos, speed);
 			if (rc != KP_ACT_MOVE_RC_OK) {
 				return rc;
 			}
@@ -321,12 +341,6 @@ kp_adjust(int32_t *ppos, uint32_t speed)
 			return KP_ACT_MOVE_RC_ABORTED;
 		}
 	} while (msg != KP_INPUT_MSG_ENTER);
-
-	/* Get the new position */
-	pos = kp_act_locate();
-	if (pos == KP_ACT_POS_INVALID) {
-		return KP_ACT_MOVE_RC_OFF;
-	}
 
 	/* Output the new position, if requested */
 	if (ppos != NULL) {
@@ -359,7 +373,8 @@ kp_cmd_adjust(const struct shell *shell, size_t argc, char **argv)
 	shell_print(shell,
 		    "Press up and down arrow keys to move the actuator.");
 	shell_print(shell, "Press Enter to stop, Ctrl-C to abort.");
-	rc = kp_adjust(NULL, kp_act_speed);
+	rc = kp_adjust(NULL, KP_ACT_POS_INVALID, KP_ACT_POS_INVALID,
+		       kp_act_speed);
 
 	/* Report error, if any */
 	if (rc == KP_ACT_MOVE_RC_ABORTED) {
