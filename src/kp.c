@@ -998,7 +998,7 @@ SHELL_CMD_ARG_REGISTER(tighten, NULL,
 			"Move the top and bottom positions within the "
 			"specified number of steps (default 1) around "
 			"the trigger point. Verify trigger with "
-			"specified number of passes (default 4).",
+			"specified number of passes (default 2).",
 			kp_cmd_tighten, 1, 2);
 
 /** Last measurement */
