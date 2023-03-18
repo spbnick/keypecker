@@ -77,6 +77,12 @@ extern bool kp_act_off(void);
 /** Invalid (unavailable) actuator position */
 #define KP_ACT_POS_INVALID	INT32_MIN
 
+/** Minimum possible actuator position */
+#define KP_ACT_POS_MIN		(INT32_MIN + 1)
+
+/** Maximum possible actuator position */
+#define KP_ACT_POS_MAX		INT32_MAX
+
 /**
  * Check if a position is valid.
  *
