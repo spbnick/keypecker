@@ -354,13 +354,18 @@ kp_adjust(int32_t *ppos, int32_t min, int32_t max, uint32_t speed)
 static int
 kp_cmd_adjust(const struct shell *shell, size_t argc, char **argv)
 {
+	int32_t start_pos;
+	const char *arg;
+	int32_t min = KP_ACT_POS_MIN;
+	int32_t max = KP_ACT_POS_MAX;
+	int32_t *ppos = NULL;
 	enum kp_act_move_rc rc;
 
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
 
-	/* Check for power */
-	if (kp_act_is_off()) {
+	/* Get the start position and check for power */
+	if (!kp_act_pos_is_valid(start_pos = kp_act_locate())) {
 		shell_error(shell, "Actuator is off, aborting");
 		return 1;
 	}
@@ -369,25 +374,84 @@ kp_cmd_adjust(const struct shell *shell, size_t argc, char **argv)
 	KP_SHELL_YIELD(kp_cmd_adjust, kp_input_bypass_cb);
 	kp_input_reset();
 
-	/* Move */
+	/* Parse the optional argument */
+	if (argc > 1) {
+		arg = argv[1];
+		if (kp_strcasecmp(arg, "top") == 0) {
+			ppos = &kp_act_pos_top;
+			if (kp_act_pos_is_valid(kp_act_pos_bottom)) {
+				max = kp_act_pos_bottom - 1;
+			}
+		} else if (kp_strcasecmp(arg, "bottom") == 0) {
+			if (kp_act_pos_is_valid(kp_act_pos_top)) {
+				min = kp_act_pos_top + 1;
+			}
+			ppos = &kp_act_pos_bottom;
+		} else if (kp_strcasecmp(arg, "current") != 0) {
+			shell_error(
+				shell,
+				"Invalid position name "
+				"(current/top/bottom expected): %s",
+				arg
+			);
+			return 1;
+		}
+	}
+
+	/* Adjust */
 	shell_print(shell,
 		    "Press up and down arrow keys to move the actuator.");
 	shell_print(shell, "Press Enter to stop, Ctrl-C to abort.");
-	rc = kp_adjust(NULL, KP_ACT_POS_INVALID, KP_ACT_POS_INVALID,
-		       kp_act_speed);
+	rc = kp_adjust(ppos, min, max, kp_act_speed);
 
 	/* Report error, if any */
 	if (rc == KP_ACT_MOVE_RC_ABORTED) {
 		shell_error(shell, "Aborted");
+		return rc;
 	} else if (rc == KP_ACT_MOVE_RC_OFF) {
 		shell_error(shell, "Actuator is off, stopping");
+		return rc;
 	}
 
-	return rc != KP_ACT_MOVE_RC_OK;
+	/* Stop, if changing the current position */
+	if (ppos == NULL) {
+		return 0;
+	}
+
+	/* Try to return to the start position */
+	switch (kp_act_move_to(start_pos, kp_act_speed)) {
+		case KP_ACT_MOVE_RC_OK:
+			break;
+		case KP_ACT_MOVE_RC_ABORTED:
+			shell_warn(
+				shell,
+				"Moving back to the start position "
+				"was aborted"
+			);
+			break;
+		case KP_ACT_MOVE_RC_OFF:
+			shell_warn(
+				shell,
+				"Couldn't move back to the start "
+				"position - actuator is off"
+			);
+			break;
+		default:
+			shell_error(
+				shell,
+				"Unexpected error moving back to the "
+				"start position"
+			);
+			break;
+	}
+
+	return 0;
 }
 
-SHELL_CMD_REGISTER(adjust, NULL, "Adjust actuator position interactively",
-			kp_cmd_adjust);
+SHELL_CMD_ARG_REGISTER(adjust, NULL,
+		       "Adjust the \"current\" (default), \"top\", "
+		       "or \"bottom\" actuator positions interactively",
+		       kp_cmd_adjust, 1, 1);
 
 /** Execute the "set speed <percentage>" command */
 static int
