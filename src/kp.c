@@ -280,12 +280,67 @@ SHELL_CMD_ARG_REGISTER(swing, NULL,
 			"current position, until interrupted",
 			kp_cmd_swing, 2, 0);
 
+/**
+ * Adjust the value of the specified actuator position variable interactively.
+ *
+ * @param ppos	Location for the position variable to adjust.
+ * 		If NULL, or if the value is invalid, the adjustment starts
+ * 		from the current position. If NULL, the final position is not
+ * 		stored. Only written to after a successful adjustment.
+ * @param speed	The speed with which to move, 0-100%.
+ *
+ * @return A movement result code, excluding KP_ACT_MOVE_TIMEOUT.
+ */
+static enum kp_act_move_rc
+kp_adjust(int32_t *ppos, uint32_t speed)
+{
+	int32_t pos = (ppos == NULL) ? KP_ACT_POS_INVALID : *ppos;
+	enum kp_act_move_rc rc;
+	enum kp_input_msg msg;
+
+	/* Move to the position in the variable, if any */
+	if (pos != KP_ACT_POS_INVALID) {
+		rc = kp_act_move_to(pos, speed);
+		if (rc != KP_ACT_MOVE_RC_OK) {
+			return rc;
+		}
+	}
+
+	/* Adjust the position until confirmed */
+	do {
+		while (kp_input_get(&msg, K_FOREVER) != 0);
+		if (msg == KP_INPUT_MSG_UP || msg == KP_INPUT_MSG_DOWN) {
+			rc = kp_act_move_by(
+				(msg == KP_INPUT_MSG_DOWN) ? 1 : -1,
+				speed
+			);
+			if (rc != KP_ACT_MOVE_RC_OK) {
+				return rc;
+			}
+		} else if (msg == KP_INPUT_MSG_ABORT) {
+			return KP_ACT_MOVE_RC_ABORTED;
+		}
+	} while (msg != KP_INPUT_MSG_ENTER);
+
+	/* Get the new position */
+	pos = kp_act_locate();
+	if (pos == KP_ACT_POS_INVALID) {
+		return KP_ACT_MOVE_RC_OFF;
+	}
+
+	/* Output the new position, if requested */
+	if (ppos != NULL) {
+		*ppos = pos;
+	}
+
+	return KP_ACT_MOVE_RC_OK;
+}
+
 /** Execute the "adjust" command */
 static int
 kp_cmd_adjust(const struct shell *shell, size_t argc, char **argv)
 {
 	enum kp_act_move_rc rc;
-	enum kp_input_msg msg;
 
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
@@ -304,22 +359,7 @@ kp_cmd_adjust(const struct shell *shell, size_t argc, char **argv)
 	shell_print(shell,
 		    "Press up and down arrow keys to move the actuator.");
 	shell_print(shell, "Press Enter to stop, Ctrl-C to abort.");
-	do {
-		/* Read next input message */
-		while (kp_input_get(&msg, K_FOREVER) != 0);
-		if (msg == KP_INPUT_MSG_UP || msg == KP_INPUT_MSG_DOWN) {
-			rc = kp_act_move_by(
-				(msg == KP_INPUT_MSG_DOWN) ? 1 : -1,
-				kp_act_speed
-			);
-		} else if (msg == KP_INPUT_MSG_ABORT) {
-			rc = KP_ACT_MOVE_RC_ABORTED;
-		} else if (msg == KP_INPUT_MSG_ENTER) {
-			break;
-		} else {
-			rc = KP_ACT_MOVE_RC_OK;
-		}
-	} while (rc == KP_ACT_MOVE_RC_OK);
+	rc = kp_adjust(NULL, kp_act_speed);
 
 	/* Report error, if any */
 	if (rc == KP_ACT_MOVE_RC_ABORTED) {
@@ -327,6 +367,7 @@ kp_cmd_adjust(const struct shell *shell, size_t argc, char **argv)
 	} else if (rc == KP_ACT_MOVE_RC_OFF) {
 		shell_error(shell, "Actuator is off, stopping");
 	}
+
 	return rc != KP_ACT_MOVE_RC_OK;
 }
 
