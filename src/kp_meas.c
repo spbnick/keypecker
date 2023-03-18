@@ -516,6 +516,11 @@ kp_meas_print_histogram(struct kp_table *table,
 			}
 		}
 	}
+	/* If minimum and maximum are not found (we had no data) */
+	if (min > max) {
+		min = 0;
+		max = meas->conf.timeout_us + meas->conf.bounce_us;
+	}
 
 	/* Calculate histogram step values per channel */
 	step_size = (max - min) / STEP_NUM;
