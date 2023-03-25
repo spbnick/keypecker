@@ -1370,6 +1370,206 @@ SHELL_CMD_ARG_REGISTER(print, NULL,
 		       "(default) or \"verbose\" format",
 		       kp_cmd_meas, 1, 1);
 
+/** Execute a "setup" command */
+static int
+kp_cmd_setup(const struct shell *shell, size_t argc, char **argv)
+{
+	int result = 1;
+	long steps;
+	long passes;
+	const char *arg;
+	enum kp_input_msg msg;
+	int32_t start_pos;
+	int32_t tightened_top;
+	int32_t tightened_bottom;
+
+	/* Check that at least one channel is enabled */
+	if (kp_cap_conf_ch_num(&kp_cap_conf, KP_CAP_DIRS_BOTH) == 0) {
+		shell_error(shell, "No enabled channels, aborting");
+		shell_info(shell,
+			"Use \"set ch\" command to enable channels");
+		return 1;
+	}
+
+	/* Return to the shell and restart in an input-diverted thread */
+	KP_SHELL_YIELD(kp_cmd_setup, kp_input_bypass_cb);
+	kp_input_reset();
+
+	/* Parse the number of steps to tighten to */
+	if (argc < 2) {
+		steps = 1;
+	} else {
+		arg = argv[1];
+		if (!kp_parse_non_negative_number(arg, &steps) ||
+				steps == 0) {
+			shell_error(
+				shell,
+				"Invalid number of steps to tighten to "
+				"(a number greater than zero expected): %s",
+				arg
+			);
+			return 1;
+		}
+	}
+
+	/* Parse the number of passes to use for verifying */
+	if (argc < 3) {
+		passes = 2;
+	} else {
+		arg = argv[2];
+		if (!kp_parse_non_negative_number(arg, &passes) ||
+				passes == 0) {
+			shell_error(
+				shell,
+				"Invalid number of passes "
+				"(a number greater than zero expected): %s",
+				arg
+			);
+			return 1;
+		}
+	}
+
+	/* Turn off the actuator */
+	kp_act_off();
+
+	/* Clear top and bottom positions (control is lost now anyway) */
+	kp_act_pos_top = KP_ACT_POS_INVALID;
+	kp_act_pos_bottom = KP_ACT_POS_INVALID;
+
+	/* Ask the user to move the actuator somewhere above trigger point */
+	shell_info(
+		shell,
+		"Actuator is off.\n"
+		"Move the actuator manually to a point above the trigger, "
+		"and press Enter.\n"
+		"Press Ctrl-C to abort.\n"
+	);
+	do {
+		while (kp_input_get(&msg, K_FOREVER) != 0);
+		if (msg == KP_INPUT_MSG_ABORT) {
+			shell_error(shell, "Aborted");
+			return 1;
+		}
+	} while (msg != KP_INPUT_MSG_ENTER);
+
+	/* Turn on the actuator */
+	kp_act_on();
+	shell_info(shell, "Actuator is on.");
+
+	/* Set the top and start positions to the current position */
+	kp_act_pos_top = start_pos = kp_act_locate();
+	if (!kp_act_pos_is_valid(kp_act_pos_top)) {
+		shell_error(shell,
+			    "Cannot get current actuator position. "
+			    "Actuator is unexpectedly off.");
+		return 1;
+	}
+	shell_info(shell, "The current position is the top.");
+
+	/* Ask the user to adjust the bottom actuator position */
+	shell_info(
+		shell,
+		"Moving one step down.\n"
+		"Press up and down arrow keys to move the actuator to "
+		"a point below the trigger, "
+		"and press Enter.\n"
+		"Press Ctrl-C to abort.\n"
+	);
+	switch(kp_adjust(&kp_act_pos_bottom,
+			 kp_act_pos_top + 1, KP_ACT_POS_MAX, kp_act_speed)) {
+		case KP_ACT_MOVE_RC_OK:
+			break;
+		case KP_ACT_MOVE_RC_OFF:
+			shell_error(shell, "Actuator is off, stopping");
+			return 1;
+		case KP_ACT_MOVE_RC_ABORTED:
+			shell_error(shell, "Aborted");
+			return 1;
+		default:
+			shell_error(shell, "Unexpected error, aborted");
+			return 1;
+	}
+	shell_info(
+		shell,
+		"Bottom position is set.\n"
+		"Tightening around the trigger point.\n"
+		"Press Ctrl-C to abort.\n"
+	);
+	tightened_top = kp_act_pos_top;
+	tightened_bottom = kp_act_pos_bottom;
+	switch(kp_tighten(&tightened_top, &tightened_bottom, &kp_cap_conf,
+			  (size_t)steps, (size_t)passes, kp_act_speed)) {
+		case KP_SAMPLE_RC_OK:
+			break;
+		case KP_SAMPLE_RC_ABORTED:
+			shell_error(shell, "Aborted");
+			return 1;
+		case KP_SAMPLE_RC_OFF:
+			shell_error(shell, "Actuator is off, aborted");
+			return 1;
+		default:
+			shell_error(shell, "Unexpected error, aborted");
+			return 1;
+	}
+
+	/* If we got a valid range */
+	if (kp_act_pos_is_valid(tightened_top) &&
+	    kp_act_pos_is_valid(tightened_bottom)) {
+		if (tightened_bottom - tightened_top > steps) {
+			shell_warn(shell,
+				   "Couldn't tighten to exactly %ld "
+				   "steps, stopped at %d",
+				   steps, tightened_bottom - tightened_top);
+		}
+		shell_info(shell, "Setup complete.");
+		kp_act_pos_top = tightened_top;
+		kp_act_pos_bottom = tightened_bottom;
+		result = 0;
+	} else {
+		shell_error(shell,
+			    "No reliable trigger between the current "
+			    "top and bottom position, not tightened.\n"
+			    "Setup incomplete.");
+	}
+
+	/* Return to the start position */
+	switch (kp_act_move_to(start_pos, kp_act_speed)) {
+		case KP_ACT_MOVE_RC_OK:
+			break;
+		case KP_ACT_MOVE_RC_ABORTED:
+			shell_warn(
+				shell,
+				"Move back to the start position "
+				"was aborted"
+			);
+			break;
+		case KP_ACT_MOVE_RC_OFF:
+			shell_warn(
+				shell,
+				"Couldn't move back to the start position - "
+				"actuator is off"
+			);
+			break;
+		default:
+			shell_warn(
+				shell,
+				"Unexpected error moving back to the start "
+				"position"
+			);
+			break;
+	}
+
+	return result;
+}
+
+SHELL_CMD_ARG_REGISTER(setup, NULL,
+		       "Make sure the actuator is on, and setup top and "
+		       "bottom positions specified number of steps "
+		       "(default 1) around the trigger point. "
+		       "Verify trigger with specified number of passes "
+		       "(default 2).",
+		       kp_cmd_setup, 1, 2);
+
 void
 main(void)
 {
