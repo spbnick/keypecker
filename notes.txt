@@ -614,18 +614,23 @@ plus bounce time when capturing with no channels enabled.
 ---
 TODO: Do not waste capture memory, use linear array of capture results with
       dynamic striding according to the number of channels enabled.
+      - done
 TODO: Do not capture passes (directions) without channels enabled. Adjust
       statistics and histogram generation accordingly.
+      - done, most likely
 TODO: Store capture parameters and results in a global state, and add a
       separate command outputting previous results according to the same
       output option as taken by the "measure" command. Call it e.g. "display".
+      - done
 TODO: Add shorter command aliases: "speed", "ch" "adj", "timeout", "bounce".
 TODO: Add "setup" command, which sets and tightens the boundaries.
+	- done
 TODO: Make the "tighten" command smarter and more reliable.
 TODO: Use a timer for driving the actuator.
 TODO: Make commands accept shortened, but unique string argument values
 FIXME: Maximum down times are longer with "measure" without "verbose"
        argument.
+	- seems to be gone now
 
 ---
 OK, assuming that (^^^) is the bounce that gets captured as another rising edge,
@@ -642,10 +647,13 @@ the shell. Could it be the interference when the serial port is not driven?
 
 TODO: Use a timer for movement
 TODO: Implement separate output command
+	- done
 TODO: Raise the debug pin when a long time is captured on one of the channels
+	- not needed, now that the capture discrepancy seems to be fixed
 TODO: Figure out why the actuator stops working when the driver board/heatsink
       is flexed
 TODO: Refer to enum kp_cap_dir as "Capture direction set"
+	- done
 
 Should we count passes which don't capture any channels?
 	For tightening?
