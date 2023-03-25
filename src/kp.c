@@ -911,6 +911,123 @@ SHELL_CMD_ARG_REGISTER(check, NULL,
 			"specified number of passes (default is one)",
 			kp_cmd_check, 1, 1);
 
+/**
+ * Adjust the value of the specified top and bottom positions to be within a
+ * number of positions around the trigger point, assuming it's between the
+ * positions.
+ *
+ * @param ptop		The location of/for the position above the trigger
+ *			(top). Must be valid. Set to KP_ACT_POS_INVALID, if
+ *			reliable trigger is not found.
+ * @param pbottom	The location of/for the position below the trigger
+ *			(bottom). Must be valid. Set to KP_ACT_POS_INVALID, if
+ *			reliable trigger is not found.
+ * @param conf		The capture configuration to use for trigger sampling.
+ *			Must be valid and have at least one channel enabled.
+ * @param steps		Maximum number of steps to tighten to, if possible.
+ *			Must be greater than zero.
+ * @param passes	The number of sample passes to verify the trigger.
+ *			Must be greater than zero.
+ * @param speed		The speed with which to move the actuator when
+ *			sampling the trigger, 0-100%.
+ *
+ * @return A sampling result code.
+ */
+static enum kp_sample_rc
+kp_tighten(int32_t *ptop, int32_t *pbottom,
+	   const struct kp_cap_conf *conf,
+	   size_t steps, size_t passes, uint32_t speed)
+{
+	enum kp_sample_rc rc;
+	int32_t top = KP_ACT_POS_INVALID;
+	int32_t bottom = KP_ACT_POS_INVALID;
+	int32_t middle = KP_ACT_POS_INVALID;
+	int32_t next_top = kp_act_pos_top;
+	int32_t next_bottom = kp_act_pos_bottom;
+	size_t triggers;
+
+	assert(ptop != NULL);
+	assert(*ptop != KP_ACT_POS_INVALID);
+	assert(pbottom != NULL);
+	assert(*pbottom != KP_ACT_POS_INVALID);
+	assert(*ptop < *pbottom);
+	assert(kp_cap_conf_is_valid(conf));
+	assert(kp_cap_conf_ch_num(conf, KP_CAP_DIRS_BOTH) > 0);
+	assert(steps > 0);
+	assert(passes > 0);
+
+	next_top = *ptop;
+	next_bottom = *pbottom;
+
+#define CHECK(_top, _bottom, _ptriggers) \
+	do {                                                    \
+		assert((_top) < (_bottom));                     \
+		rc = kp_sample_check(_top, _bottom, speed,      \
+				     passes, conf, _ptriggers); \
+		if (rc != KP_SAMPLE_RC_OK) {                    \
+			return rc;                              \
+		}                                               \
+	} while (0)
+
+	while (true) {
+		CHECK(next_top, next_bottom, &triggers);
+		/* If we don't have reliable triggers */
+		if (triggers < passes) {
+			/* If we tried the top half just now */
+			if (next_bottom == middle) {
+				/* Try the bottom half next */
+				next_top = middle;
+				next_bottom = bottom;
+				continue;
+			}
+			/* Give up */
+			break;
+		}
+		/* We have reliable triggers, accept the next range */
+		top = next_top;
+		bottom = next_bottom;
+		/* If we can't reduce further by binary division */
+		if ((bottom - top) < steps * 2) {
+			break;
+		}
+		/* Try the top half next */
+		middle = (top + bottom) / 2;
+		next_top = top;
+		next_bottom = middle;
+	}
+
+	/* While we're not fully tight yet */
+	while (kp_act_pos_is_valid(top) && kp_act_pos_is_valid(bottom) &&
+	       (bottom - top) > steps && (bottom - top) < steps * 2) {
+		/* Try top-aligned range */
+		next_top = top;
+		next_bottom = top + steps;
+		CHECK(next_top, next_bottom, &triggers);
+		/* If that didn't work */
+		if (triggers < passes) {
+			/* Try bottom-aligned range */
+			next_top = bottom - steps;
+			next_bottom = bottom;
+			CHECK(next_top, next_bottom, &triggers);
+			/* If even that didn't work */
+			if (triggers < passes) {
+				/* Give up */
+				break;
+			}
+		}
+		top = next_top;
+		bottom = next_bottom;
+	}
+
+#undef CHECK
+
+	/* Output whatever we tightened to, if any */
+	*ptop = top;
+	*pbottom = bottom;
+
+	return KP_SAMPLE_RC_OK;
+}
+
 /** Execute the "tighten" command */
 static int
 kp_cmd_tighten(const struct shell *shell, size_t argc, char **argv)
@@ -919,19 +1036,10 @@ kp_cmd_tighten(const struct shell *shell, size_t argc, char **argv)
 	long steps;
 	long passes;
 	int32_t start;
-	size_t triggers;
-	int32_t top = KP_ACT_POS_INVALID;
-	int32_t bottom = KP_ACT_POS_INVALID;
-	int32_t middle = KP_ACT_POS_INVALID;
-	int32_t next_top = kp_act_pos_top;
-	int32_t next_bottom = kp_act_pos_bottom;
+	int32_t top = kp_act_pos_top;
+	int32_t bottom = kp_act_pos_bottom;
 	int result = 1;
 
-	/* Check for power */
-	if (kp_act_is_off()) {
-		shell_error(shell, "Actuator is off, aborting");
-		return 1;
-	}
 	/* Check for parameters */
 	if (!kp_act_pos_is_valid(kp_act_pos_top)) {
 		shell_error(shell, "Top position not set, aborting");
@@ -988,83 +1096,25 @@ kp_cmd_tighten(const struct shell *shell, size_t argc, char **argv)
 		}
 	}
 
-	/* Remember the start position */
+	/* Remember the start position, if any */
 	start = kp_act_locate();
-
-#define CHECK(_top, _bottom, _ptriggers) \
-	do {                                                            \
-		assert((_top) < (_bottom));                             \
-		switch (kp_sample_check(_top, _bottom, kp_act_speed,    \
-					(size_t)passes, &kp_cap_conf,   \
-					_ptriggers)) {                  \
-			case KP_SAMPLE_RC_OK:                           \
-				break;                                  \
-			case KP_SAMPLE_RC_ABORTED:                      \
-				shell_error(shell, "Aborted");          \
-				return 1;                               \
-			case KP_SAMPLE_RC_OFF:                          \
-				shell_error(shell,                      \
-					"Actuator is off, aborted");    \
-				return 1;                               \
-			default:                                        \
-				shell_error(shell,                      \
-					"Unexpected error, aborted");   \
-				return 1;                               \
-		}                                                       \
-	} while (0)
-
-	while (true) {
-		CHECK(next_top, next_bottom, &triggers);
-		/* If we don't have reliable triggers */
-		if (triggers < (size_t)passes) {
-			/* If we tried the top half just now */
-			if (next_bottom == middle) {
-				/* Try the bottom half next */
-				next_top = middle;
-				next_bottom = bottom;
-				continue;
-			}
-			/* Give up */
+	/* Tighten */
+	switch (kp_tighten(&top, &bottom, &kp_cap_conf,
+			   (size_t)steps, (size_t)passes, kp_act_speed)) {
+		case KP_SAMPLE_RC_OK:
 			break;
-		}
-		/* We have reliable triggers, accept the next range */
-		top = next_top;
-		bottom = next_bottom;
-		/* If we can't reduce further by binary division */
-		if ((bottom - top) < steps * 2) {
-			break;
-		}
-		/* Try the top half next */
-		middle = (top + bottom) / 2;
-		next_top = top;
-		next_bottom = middle;
+		case KP_SAMPLE_RC_ABORTED:
+			shell_error(shell, "Aborted");
+			return 1;
+		case KP_SAMPLE_RC_OFF:
+			shell_error(shell,
+				"Actuator is off, aborted");
+			return 1;
+		default:
+			shell_error(shell,
+				"Unexpected error, aborted");
+			return 1;
 	}
-
-	/* While we're not fully tight yet */
-	while (kp_act_pos_is_valid(top) && kp_act_pos_is_valid(bottom) &&
-			(bottom - top) > steps &&
-			(bottom - top) < steps * 2) {
-		/* Try top-aligned range */
-		next_top = top;
-		next_bottom = top + steps;
-		CHECK(next_top, next_bottom, &triggers);
-		/* If that didn't work */
-		if (triggers < (size_t)passes) {
-			/* Try bottom-aligned range */
-			next_top = bottom - steps;
-			next_bottom = bottom;
-			CHECK(next_top, next_bottom, &triggers);
-			/* If even that didn't work */
-			if (triggers < (size_t)passes) {
-				/* Give up */
-				break;
-			}
-		}
-		top = next_top;
-		bottom = next_bottom;
-	}
-
-#undef CHECK
 
 	/* If we got a valid range */
 	if (kp_act_pos_is_valid(top) && kp_act_pos_is_valid(bottom)) {
@@ -1080,7 +1130,7 @@ kp_cmd_tighten(const struct shell *shell, size_t argc, char **argv)
 	} else {
 		shell_error(shell,
 			"No reliable trigger between the current "
-			"top and bottom position, not narrowed"
+			"top and bottom position, not tightened"
 		);
 	}
 
