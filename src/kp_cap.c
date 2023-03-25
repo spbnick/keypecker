@@ -79,9 +79,10 @@ kp_cap_isr(void *arg)
 
 	/* If the capture is not aborted */
 	if (!kp_cap_aborted) {
-		uint32_t sr = kp_cap_timer->SR & kp_cap_timer->DIER;
+		uint32_t sr = kp_cap_timer->SR;
+		uint32_t masked_sr = sr & kp_cap_timer->DIER;
 		/* If the timer got triggered */
-		if (sr & TIM_SR_TIF) {
+		if (masked_sr & TIM_SR_TIF) {
 			/* Raise the debugging pins, if any */
 			if (dbg->gpio && dbg->update_pin != UINT8_MAX) {
 				gpio_pin_set(dbg->gpio, dbg->update_pin, 1);
@@ -99,7 +100,7 @@ kp_cap_isr(void *arg)
 			kp_cap_timer->DIER &= ~TIM_SR_TIF;
 			kp_cap_timer->SR &= ~TIM_SR_TIF;
 		/* Else, If both the capture and bounce times have expired */
-		} else if (sr & TIM_SR_UIF) {
+		} else if (masked_sr & TIM_SR_UIF) {
 			/* Disable the trigger */
 			LL_TIM_SetSlaveMode(kp_cap_timer,
 						LL_TIM_SLAVEMODE_DISABLED);
