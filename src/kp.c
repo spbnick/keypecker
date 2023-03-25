@@ -1315,9 +1315,19 @@ kp_cmd_meas(const struct shell *shell, size_t argc, char **argv)
 		} else {
 			rc = kp_meas_acquire(&kp_meas, NULL, NULL);
 		}
-		/* If we failed */
-		if (rc != KP_SAMPLE_RC_OK) {
-			return 1;
+		/* Handle result code */
+		switch (rc) {
+			case KP_SAMPLE_RC_OK:
+				break;
+			case KP_SAMPLE_RC_ABORTED:
+				shell_error(shell, "Aborted");
+				return 1;
+			case KP_SAMPLE_RC_OFF:
+				shell_error(shell, "Actuator is off, aborted");
+				return 1;
+			default:
+				shell_error(shell, "Unexpected error, aborted");
+				return 1;
 		}
 
 		/* Try to return to the start position */
